@@ -23,6 +23,12 @@ jobs:
           xcodebuild build -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO 2>&1 | tee build.log
           result=${PIPESTATUS[0]}
           if [ "$result" -ne 0 ]; then
+            {
+              echo "## iOS compiler diagnostics"
+              echo '```text'
+              tail -n 80 build.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
             tail -n 40 build.log | while IFS= read -r line; do echo "::error::$line"; done
             exit "$result"
           fi
