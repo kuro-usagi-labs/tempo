@@ -67,6 +67,7 @@ struct TodayView: View {
     @State private var showCheckIn = false
     @State private var showBreathing = false
     @State private var showHealthCheck = false
+    private let weeklyPlan = WeeklyScheduler().beginnerPlan()
     var body: some View { NavigationStack { ScrollView { VStack(alignment: .leading, spacing: 20) {
         Text("TEMPO").font(.caption.weight(.bold)).foregroundStyle(.cyan)
         Text("Ritme yang lebih tenang.").font(.largeTitle.bold())
@@ -74,8 +75,17 @@ struct TodayView: View {
         Button { showCheckIn = true } label: { HStack { Image(systemName: "bolt.heart.fill"); VStack(alignment: .leading) { Text("Aku lagi terangsang").font(.headline); Text("Dapatkan rekomendasi privat dalam 15 detik").font(.caption).opacity(0.8) }; Spacer(); Image(systemName: "chevron.right") }.padding().frame(maxWidth: .infinity).background(Color.indigo.opacity(0.65), in: RoundedRectangle(cornerRadius: 24)) }.accessibilityLabel("Aku lagi terangsang, mulai check-in cepat")
         Button { showHealthCheck = true } label: { HStack { Image(systemName: "cross.case.fill"); Text("Aku punya keluhan").font(.headline); Spacer(); Image(systemName: "chevron.right") }.padding().frame(maxWidth: .infinity).background(Color.red.opacity(0.22), in: RoundedRectangle(cornerRadius: 20)) }
         HStack { Metric(title: "Kesadaran", value: "—"); Metric(title: "Pemulihan", value: "—") }
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Rencana minggu ini").font(.headline)
+            ForEach(weeklyPlan, id: \.day) { activity in
+                HStack { Text(dayLabel(activity.day)).foregroundStyle(.secondary).frame(width: 42, alignment: .leading); Text(activityLabel(activity.kind)); Spacer(); Image(systemName: activityIcon(activity.kind)).foregroundStyle(.cyan) }
+            }
+        }.padding().background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 20))
     }.padding() }.background(Color(red: 0.035, green: 0.04, blue: 0.05)).navigationBarHidden(true).sheet(isPresented: $showCheckIn) { UrgeCheckInView() }.sheet(isPresented: $showBreathing) { NavigationStack { BreathingView(title: "Napas singkat", duration: 240).toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Tutup") { showBreathing = false } } } } }.sheet(isPresented: $showHealthCheck) { HealthCheckView() } } }
 }
+private func dayLabel(_ day: Int) -> String { ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"][day] }
+private func activityLabel(_ kind: ActivityKind) -> String { switch kind { case .guided: "Guided session"; case .breathing: "Napas singkat"; case .cardio: "Jalan / cardio"; case .strength: "Kekuatan pemula"; case .recovery: "Pemulihan"; case .education: "Materi singkat"; case .review: "Tinjauan mingguan" } }
+private func activityIcon(_ kind: ActivityKind) -> String { switch kind { case .guided: "timer"; case .breathing: "wind"; case .cardio: "figure.walk"; case .strength: "figure.strengthtraining.traditional"; case .recovery: "bed.double"; case .education: "book"; case .review: "calendar" } }
 
 struct HealthCheckView: View {
     @Environment(\.dismiss) private var dismiss
