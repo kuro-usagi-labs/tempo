@@ -159,12 +159,32 @@ struct BreathingOrbView: View {
 }
 
 struct ProgressView: View {
+    @Environment(LocalHistory.self) private var history
     var body: some View {
         NavigationStack {
-            ContentUnavailableView("Belum ada progres", systemImage: "chart.line.uptrend.xyaxis", description: Text("Selesaikan check-in atau aktivitas pertamamu untuk melihat tren privat."))
-                .navigationTitle("Progres")
+            if history.checkIns.isEmpty {
+                ContentUnavailableView("Belum ada progres", systemImage: "chart.line.uptrend.xyaxis", description: Text("Selesaikan check-in atau aktivitas pertamamu untuk melihat tren privat."))
+                    .navigationTitle("Progres")
+            } else {
+                List {
+                    Section("Ringkasan privat") {
+                        HStack { Text("Total check-in"); Spacer(); Text("\(history.checkIns.count)").monospacedDigit() }
+                        HStack { Text("Rata-rata intensitas"); Spacer(); Text(String(format: "%.1f", averageIntensity)).monospacedDigit() }
+                        HStack { Text("Safety hold"); Spacer(); Text("\(history.checkIns.filter(\.blocksTraining).count)").monospacedDigit() }
+                    }
+                    Section("Aktivitas terbaru") {
+                        ForEach(history.checkIns.prefix(10)) { entry in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(entry.action.capitalized).font(.headline)
+                                Text("Intensitas \(entry.intensity) · \(entry.trigger) · \(entry.createdAt.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }.navigationTitle("Progres")
+            }
         }
     }
+    private var averageIntensity: Double { Double(history.checkIns.map(\.intensity).reduce(0, +)) / Double(history.checkIns.count) }
 }
 
 struct LearnView: View {
@@ -180,6 +200,7 @@ struct LearnView: View {
 }
 
 struct SettingsView: View {
+    @Environment(LocalHistory.self) private var history
     @AppStorage("discreetTerminology") private var discreet = false
     @AppStorage("hapticsEnabled") private var haptics = true
     @AppStorage("privacyLockEnabled") private var privacyLockEnabled = false
@@ -203,6 +224,7 @@ struct SettingsView: View {
                 UserDefaults.standard.removeObject(forKey: "discreetTerminology")
                 UserDefaults.standard.removeObject(forKey: "hapticsEnabled")
                 UserDefaults.standard.removeObject(forKey: "privacyLockEnabled")
+                history.deleteAll()
             }
         } message: { Text("Tindakan ini menghapus preferensi dan data lokal yang tersimpan. Ini tidak dapat dibatalkan.") }
     }
