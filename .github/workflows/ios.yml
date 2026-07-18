@@ -18,7 +18,21 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
       - name: Compile app for simulator
-        run: xcodebuild build -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO
+        run: |
+          set -o pipefail
+          xcodebuild build -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO 2>&1 | tee build.log
+          result=${PIPESTATUS[0]}
+          if [ "$result" -ne 0 ]; then
+            grep -E "(error:|fatal error:)" build.log | while IFS= read -r line; do echo "::error::$line"; done
+            exit "$result"
+          fi
+      - name: Upload compile diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compile-diagnostics
+          path: build.log
+          if-no-files-found: warn
       - name: Build archive
         run: xcodebuild archive -project Tempo.xcodeproj -scheme Tempo -archivePath "$PWD/build/Tempo.xcarchive" -sdk iphoneos CODE_SIGNING_ALLOWED=NO
       - name: Create unsigned IPA artifact
