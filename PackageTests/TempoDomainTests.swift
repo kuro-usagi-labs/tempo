@@ -51,6 +51,14 @@ final class TempoDomainTests: XCTestCase {
         XCTAssertEqual(days, [1, 4])
     }
 
+    func testSchedulerAlwaysProducesSevenDaysAndRecovery() {
+        for plan in [WeeklyScheduler().beginnerPlan(), WeeklyScheduler().beginnerPlan(highStress: true), WeeklyScheduler().beginnerPlan(irritation: true)] {
+            XCTAssertEqual(plan.map(\.day), Array(0...6))
+            XCTAssertTrue(plan.contains { $0.kind == .recovery })
+            XCTAssertLessThanOrEqual(plan.filter { $0.kind == .guided }.count, 3)
+        }
+    }
+
     func testSessionRequiresRecoveryBeforeResume() {
         var session = GuidedSessionMachine()
         session.start(); session.beginActive(); session.rising(level: 7, threshold: 7); session.pause()
@@ -98,5 +106,19 @@ final class TempoDomainTests: XCTestCase {
         XCTAssertEqual(scores.awareness, 100)
         XCTAssertEqual(scores.control, 100)
         XCTAssertEqual(scores.consistency, 100)
+    }
+
+    func testScoreWeightsMatchSpecification() {
+        func scores(early: Double = 0, logging: Double = 0, tension: Double = 0, escalation: Double = 0, cycles: Double = 0, controlled: Double = 0, threshold: Double = 0, recovery: Double = 0) -> ScoreSnapshot {
+            ScoreCalculator().calculate(ScoreInputs(earlyPauseRate: early, loggingCompleteness: logging, tensionRecognitionRate: tension, escalationPredictionRate: escalation, successfulCycleRatio: cycles, controlledCompletionRatio: controlled, thresholdCompliance: threshold, recoveryCompletionRatio: recovery, calmRate: 0, adherenceRate: 0))
+        }
+        XCTAssertEqual(scores(early: 1).awareness, 50)
+        XCTAssertEqual(scores(logging: 1).awareness, 20)
+        XCTAssertEqual(scores(tension: 1).awareness, 15)
+        XCTAssertEqual(scores(escalation: 1).awareness, 15)
+        XCTAssertEqual(scores(cycles: 1).control, 45)
+        XCTAssertEqual(scores(controlled: 1).control, 20)
+        XCTAssertEqual(scores(threshold: 1).control, 20)
+        XCTAssertEqual(scores(recovery: 1).control, 15)
     }
 }

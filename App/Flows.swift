@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 struct UrgeCheckInView: View {
     @Environment(\.dismiss) private var dismiss
@@ -14,7 +15,7 @@ struct UrgeCheckInView: View {
     private var triggerQuestion: some View { ChoiceQuestion(title: "Apa konteksnya sekarang?", selection: $trigger, labels: [.init(.desire, "Gairah seksual"), .init(.boredom, "Bosan"), .init(.stress, "Stres"), .init(.loneliness, "Kesepian"), .init(.sleep, "Sulit tidur")]) }
     private var intentQuestion: some View { ChoiceQuestion(title: "Apa yang kamu butuhkan?", selection: $intent, labels: [.init(.calm, "Menenangkan diri"), .init(.training, "Latihan kontrol"), .init(.privateSession, "Sesi pribadi")]) }
     private var safetyQuestion: some View { VStack(spacing: 20) { Text("Ada nyeri, cedera, perih saat kencing, atau cairan tidak biasa?").font(.title2.bold()).multilineTextAlignment(.center); Toggle("Ya, ada keluhan", isOn: $hasSafetyFlag).padding().background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 16)); Text("Keluhan apa pun akan menghentikan latihan dan mengarahkanmu ke health check.").foregroundStyle(.secondary).multilineTextAlignment(.center) }.padding() }
-    private func advance() { if step < 3 { step += 1 } else { var c = DecisionContext(); c.programPhase = history.effectiveProgramPhase; c.urgeIntensity = intensity; c.trigger = trigger; c.intent = intent; c.pain = hasSafetyFlag; let recommendation = RuleEngine().evaluate(c); history.add(intensity: intensity, trigger: trigger, intent: intent, recommendation: recommendation); result = recommendation } }
+    private func advance() { if step < 3 { step += 1 } else { var c = DecisionContext(); c.programPhase = history.effectiveProgramPhase; c.urgeIntensity = intensity; c.trigger = trigger; c.intent = intent; c.pain = hasSafetyFlag; c.anxiety = history.baseline?.anxiety ?? 5; c.hoursSinceLastSession = history.hoursSinceLastSession; c.guidedSessionsLast7Days = history.guidedSessionsLast7Days; let recommendation = RuleEngine().evaluate(c); history.add(intensity: intensity, trigger: trigger, intent: intent, recommendation: recommendation); result = recommendation } }
 }
 
 struct ChoiceOption<T: Hashable>: Identifiable { let value: T; let title: String; var id: T { value }; init(_ value: T, _ title: String) { self.value = value; self.title = title } }
@@ -40,6 +41,8 @@ struct TrainingView: View {
                         Text("Safety hold aktif sejak \(hold.createdAt.formatted(date: .abbreviated, time: .omitted)). Tidak dapat dilewati.").font(.caption).foregroundStyle(.secondary)
                     } else if history.baseline == nil {
                         Label("Lengkapi baseline dari tab Hari ini", systemImage: "checklist").foregroundStyle(.orange)
+                    } else if (history.hoursSinceLastSession ?? .infinity) <= 24 || history.guidedSessionsLast7Days >= 3 {
+                        Label("Guided session dijeda untuk pemulihan", systemImage: "bed.double.fill").foregroundStyle(.orange)
                     } else {
                         NavigationLink { GuidedSessionView() } label: {
                             Label("Guided control session", systemImage: "timer")
@@ -68,6 +71,7 @@ struct TrainingView: View {
 struct ExerciseDetailView: View {
     enum Kind { case walk, strength }
     let kind: Kind
+    @Environment(LocalHistory.self) private var history
     @State private var completed = false
     var body: some View {
         ScrollView {
@@ -81,7 +85,11 @@ struct ExerciseDetailView: View {
                         Text("• Wall atau incline push-up: 2 × 6–10\n• Chair squat: 2 × 8–12\n• Glute bridge: 2 × 8–12\n• Bird dog: 2 × 6 per sisi\n• Calf raise: 2 × 10–15")
                     } }
                 }
-                Button(completed ? "Aktivitas selesai" : "Tandai selesai") { completed = true }
+                Button(completed ? "Aktivitas selesai" : "Tandai selesai") {
+                    guard !completed else { return }
+                    history.addExercise(kind: kind == .walk ? "Jalan santai" : "Kekuatan pemula", durationMinutes: kind == .walk ? 20 : 15)
+                    completed = true
+                }
                     .buttonStyle(.borderedProminent).controlSize(.large).disabled(completed)
                 Text("Gerak mendukung kesehatan umum, suasana hati, tidur, dan pengelolaan stres. Ini bukan pengobatan untuk kondisi seksual.").font(.footnote).foregroundStyle(.secondary)
             }.padding()
@@ -389,16 +397,24 @@ struct ProgressView: View {
     @Environment(LocalHistory.self) private var history
     var body: some View {
         NavigationStack {
-            if history.checkIns.isEmpty {
+            if history.checkIns.isEmpty && history.sessions.isEmpty && history.exercises.isEmpty {
                 ContentUnavailableView("Belum ada progres", systemImage: "chart.line.uptrend.xyaxis", description: Text("Selesaikan check-in atau aktivitas pertamamu untuk melihat tren privat."))
                     .navigationTitle("Progres")
             } else {
                 List {
+                    Section("Skor saat ini") {
+                        scoreRow("Kesadaran", value: history.scoreSnapshot.awareness, color: .cyan)
+                        scoreRow("Kontrol", value: history.scoreSnapshot.control, color: .indigo)
+                        scoreRow("Pemulihan", value: history.scoreSnapshot.recovery, color: .green)
+                        scoreRow("Konsistensi", value: history.scoreSnapshot.consistency, color: .orange)
+                        Text("Skor merangkum kebiasaan dan kualitas jeda, bukan membandingkanmu dengan orang lain.").font(.caption).foregroundStyle(.secondary)
+                    }
                     Section("Ringkasan privat") {
                         HStack { Text("Total check-in"); Spacer(); Text("\(history.checkIns.count)").monospacedDigit() }
-                        HStack { Text("Rata-rata intensitas"); Spacer(); Text(String(format: "%.1f", averageIntensity)).monospacedDigit() }
+                        if !history.checkIns.isEmpty { HStack { Text("Rata-rata intensitas"); Spacer(); Text(String(format: "%.1f", averageIntensity)).monospacedDigit() } }
                         HStack { Text("Safety hold"); Spacer(); Text("\(history.checkIns.filter(\.blocksTraining).count)").monospacedDigit() }
                         HStack { Text("Guided session"); Spacer(); Text("\(history.sessions.count)").monospacedDigit() }
+                        HStack { Text("Aktivitas gerak"); Spacer(); Text("\(history.exercises.count)").monospacedDigit() }
                     }
                     Section("Aktivitas terbaru") {
                         ForEach(history.checkIns.prefix(10)) { entry in
@@ -408,31 +424,78 @@ struct ProgressView: View {
                             }
                         }
                     }
+                    if !history.exercises.isEmpty {
+                        Section("Gerak terbaru") {
+                            ForEach(history.exercises.prefix(5)) { entry in
+                                HStack { Label(entry.kind, systemImage: "figure.walk"); Spacer(); Text("\(entry.durationMinutes) mnt").foregroundStyle(.secondary) }
+                            }
+                        }
+                    }
                 }.navigationTitle("Progres")
             }
         }
     }
     private var averageIntensity: Double { Double(history.checkIns.map(\.intensity).reduce(0, +)) / Double(history.checkIns.count) }
+    private func scoreRow(_ title: String, value: Int, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack { Text(title); Spacer(); Text("\(value)").font(.headline.monospacedDigit()) }
+            SwiftUI.ProgressView(value: Double(value), total: 100).tint(color)
+        }.accessibilityElement(children: .combine).accessibilityLabel("\(title), \(value) dari 100")
+    }
 }
 
 struct LearnView: View {
+    private let sections: [(String, [LessonItem])] = [
+        ("Memahami tubuh", [
+            .init("Kurva intensitas", "Gairah dan intensitas dapat naik maupun turun. Mengenali perubahan lebih awal memberi ruang untuk memilih jeda sebelum semuanya terasa mendesak."),
+            .init("Respons tubuh yang normal", "Respons fisik dapat berubah dari hari ke hari. Variasi bukan kegagalan dan tidak perlu dikoreksi dengan memaksa tubuh."),
+            .init("Pre-ejakulat bukan kegagalan", "Pre-ejakulat adalah respons tubuh yang dapat terjadi secara normal. TEMPO menilai kesadaran dan pilihan aman, bukan mengejar tubuh yang selalu sama."),
+            .init("Ereksi dapat berubah", "Kehilangan atau berkurangnya ereksi saat jeda bukan kegagalan. Jangan menambah stimulasi hanya untuk mempertahankan kondisi tertentu."),
+            .init("Durasi bukan nilai diri", "Durasi sesi tidak menentukan nilai, kedekatan, atau kemajuanmu. Keterampilan utama adalah mengenali sinyal dan merespons dengan aman.")
+        ]),
+        ("Keterampilan kesadaran", [
+            .init("Mengenali level awal", "Perhatikan napas, ketegangan rahang, perut, paha, dan bokong. Perubahan kecil sering muncul sebelum intensitas terasa tinggi."),
+            .init("Melambat di level enam", "Saat tubuh mulai meningkat, kurangi tempo dan tekanan. Biarkan napas melambat dan lepaskan ketegangan yang tidak perlu."),
+            .init("Berhenti di ambang batas", "Instruksi berhenti adalah bagian inti latihan. Hands off, bernapas, dan tunggu sampai intensitas benar-benar turun."),
+            .init("Hampir terlambat", "Jika terasa hampir terlambat, masuk ke jeda darurat tanpa menyalahkan diri. Informasi ini membantu penyesuaian sesi berikutnya."),
+            .init("Siklus bukan perlombaan", "Satu siklus yang tenang lebih berguna daripada banyak pengulangan yang dipaksakan. Batas maksimum melindungi pemulihan tubuh.")
+        ]),
+        ("Pemulihan dan kebiasaan", [
+            .init("Istirahat juga latihan", "Mematuhi hari pemulihan adalah bagian dari progres. Sesi tambahan tidak otomatis mempercepat perubahan."),
+            .init("Napas pemulihan", "Tarik napas perlahan dan biarkan embusan sedikit lebih panjang. Tujuannya memberi waktu untuk mengamati, bukan memaksa tubuh menjadi tenang."),
+            .init("Gerak ringan", "Jalan santai dan latihan kekuatan dasar dapat mendukung kesehatan umum, tidur, dan suasana hati. Ini bukan pengobatan kondisi seksual."),
+            .init("Tidur dan stres", "Kurang tidur dan stres dapat mengubah perhatian serta respons tubuh. Pada hari berat, rencana yang lebih ringan tetap bernilai."),
+            .init("Mengurangi kebiasaan terburu-buru", "Latih transisi yang sengaja: mulai pelan, periksa ketegangan, dan berhenti sesuai prompt. Perubahan kebiasaan dibangun melalui konsistensi, bukan tekanan.")
+        ]),
+        ("Keselamatan dan bantuan", [
+            .init("Kapan latihan harus dihentikan", "Hentikan latihan jika ada nyeri, perdarahan, demam, cedera akut, perih saat kencing, atau cairan tidak biasa."),
+            .init("Mencari tenaga kesehatan", "Keluhan menetap atau perubahan mendadak layak dibicarakan dengan dokter atau tenaga kesehatan yang sesuai. TEMPO tidak membuat diagnosis."),
+            .init("Tanda yang membutuhkan bantuan segera", "Nyeri berat, perdarahan banyak, pingsan, demam tinggi, atau cedera berat memerlukan pertolongan segera sesuai layanan setempat."),
+            .init("Iritasi dan pemulihan", "Iritasi ringan tetap merupakan alasan untuk berhenti dan memberi waktu pemulihan. Lanjut hanya setelah pemeriksaan ulang bebas gejala."),
+            .init("Privasi dan catatan lokal", "Jawaban dan riwayat TEMPO disimpan pada perangkat. Kamu dapat mengunci aplikasi dan menghapus seluruh data dari Pengaturan.")
+        ])
+    ]
+
     var body: some View {
         NavigationStack {
             List {
-                Section("Dasar tubuh") {
-                    NavigationLink("Gairah adalah kurva, bukan sakelar") { LessonView(title: "Gairah adalah kurva", body: "Intensitas dapat naik dan turun. Mengenali perubahan lebih awal memberi ruang untuk memperlambat atau berhenti tanpa tekanan.") }
-                    NavigationLink("Pre-ejakulat bukan kegagalan") { LessonView(title: "Respons normal", body: "Pre-ejakulat adalah respons tubuh yang normal dan tidak berarti sesi gagal. Fokus aplikasi ini adalah kesadaran dan pilihan yang aman.") }
-                }
-                Section("Keterampilan") {
-                    NavigationLink("Kapan perlu melambat") { LessonView(title: "Melambat lebih awal", body: "Saat intensitas mulai meningkat, kurangi tempo dan tekanan. Rilekskan rahang, perut, paha, dan bokong.") }
-                    NavigationLink("Napas pemulihan") { BreathingView(title: "Napas pemulihan", duration: 60) }
-                }
-                Section("Kesehatan") {
-                    NavigationLink("Tanda yang perlu diperiksa") { LessonView(title: "Hentikan latihan dan cari bantuan", body: "Hentikan latihan dan pertimbangkan penilaian profesional bila ada nyeri berat, perdarahan, demam, perih saat kencing, cairan tidak biasa, cedera akut, atau perubahan fungsi yang mendadak.") }
+                ForEach(sections, id: \.0) { section in
+                    Section(section.0) {
+                        ForEach(section.1) { lesson in
+                            NavigationLink(lesson.title) { LessonView(title: lesson.title, body: lesson.body) }
+                        }
+                    }
                 }
             }.navigationTitle("Belajar")
         }
     }
+}
+
+private struct LessonItem: Identifiable {
+    let id = UUID()
+    let title: String
+    let body: String
+    init(_ title: String, _ body: String) { self.title = title; self.body = body }
 }
 
 struct LessonView: View {
@@ -446,10 +509,17 @@ struct SettingsView: View {
     @Environment(LocalHistory.self) private var history
     @AppStorage("discreetTerminology") private var discreet = false
     @AppStorage("hapticsEnabled") private var haptics = true
-    @AppStorage("privacyCoverEnabled") private var privacyCoverEnabled = false
+    @AppStorage("privacyCoverEnabled") private var privacyCoverEnabled = true
     @AppStorage("biometricLockEnabled") private var biometricLockEnabled = false
     @State private var showDeletionConfirmation = false
+    @State private var showExportPrompt = false
+    @State private var showExporter = false
+    @State private var exportPassword = ""
+    @State private var exportDocument = TempoExportDocument()
+    @State private var exportError = false
+    @State private var biometricError = false
     @AppStorage("dailyPlanRemindersEnabled") private var remindersEnabled = false
+    @AppStorage("dailyPlanReminderHour") private var reminderHour = 9
     @AppStorage("onboardingCompleted") private var onboardingCompleted = false
     var body: some View {
         NavigationStack {
@@ -457,16 +527,21 @@ struct SettingsView: View {
                 Section("Privasi") {
                     Toggle("Terminologi privat", isOn: $discreet)
                     Toggle("Tutup konten saat aplikasi di latar belakang", isOn: $privacyCoverEnabled)
-                    Toggle("Minta Face ID / kode saat membuka aplikasi", isOn: $biometricLockEnabled)
+                    Toggle("Minta Face ID / kode saat membuka aplikasi", isOn: biometricBinding)
+                    Button("Export data terenkripsi") { exportPassword = ""; showExportPrompt = true }
                     Button("Hapus semua data", role: .destructive) { showDeletionConfirmation = true }
                 }
                 Section("Preferensi") {
                     Toggle("Haptics", isOn: $haptics)
                     Toggle("Pengingat rencana harian", isOn: $remindersEnabled)
                         .onChange(of: remindersEnabled) { _, enabled in
-                            if enabled { Task { await LocalNotifications.requestAndScheduleDailyPlan() } }
+                            if enabled { Task { await LocalNotifications.requestAndScheduleDailyPlan(hour: reminderHour) } }
                             else { LocalNotifications.removeDailyPlan() }
                         }
+                    if remindersEnabled {
+                        Stepper("Waktu pengingat: \(String(format: "%02d:00", reminderHour))", value: $reminderHour, in: 8...21)
+                            .onChange(of: reminderHour) { _, hour in Task { await LocalNotifications.requestAndScheduleDailyPlan(hour: hour) } }
+                    }
                     NavigationLink("Tentang keselamatan") { Text("TEMPO bukan alat diagnosis atau layanan darurat. Nyeri, perdarahan, demam, perih saat kencing, atau cairan tidak biasa memerlukan penilaian profesional.").padding() }
                     NavigationLink("Tentang rule engine") { RuleEngineInfoView() }
                 }
@@ -476,9 +551,10 @@ struct SettingsView: View {
             Button("Hapus semua data", role: .destructive) {
                 discreet = false
                 haptics = true
-                privacyCoverEnabled = false
+                privacyCoverEnabled = true
                 biometricLockEnabled = false
                 remindersEnabled = false
+                reminderHour = 9
                 UserDefaults.standard.removeObject(forKey: "baselineCompleted")
                 onboardingCompleted = false
                 UserDefaults.standard.removeObject(forKey: "privacyLockEnabled")
@@ -486,6 +562,29 @@ struct SettingsView: View {
                 history.deleteAll()
             }
         } message: { Text("Tindakan ini menghapus preferensi dan data lokal yang tersimpan. Ini tidak dapat dibatalkan.") }
+        .alert("Lindungi file export", isPresented: $showExportPrompt) {
+            SecureField("Password minimal 8 karakter", text: $exportPassword)
+            Button("Buat file") { createExport() }
+            Button("Batal", role: .cancel) {}
+        } message: { Text("Password tidak disimpan oleh TEMPO. Simpan password ini sendiri karena file tidak dapat dibuka tanpanya.") }
+        .alert("Export gagal", isPresented: $exportError) { Button("OK") {} } message: { Text("Gunakan password minimal 8 karakter dan coba kembali.") }
+        .alert("Kunci perangkat tidak tersedia", isPresented: $biometricError) { Button("OK") {} } message: { Text("Aktifkan kode perangkat atau biometrik terlebih dahulu agar TEMPO tidak terkunci tanpa jalan masuk.") }
+        .fileExporter(isPresented: $showExporter, document: exportDocument, contentType: UTType.data, defaultFilename: "Tempo-Export.tempo") { _ in }
+    }
+
+    private func createExport() {
+        guard let data = history.makeExportData(), let encrypted = try? EncryptedExport.encrypt(data, password: exportPassword) else { exportError = true; return }
+        exportDocument = TempoExportDocument(data: encrypted)
+        showExporter = true
+    }
+    private var biometricBinding: Binding<Bool> {
+        Binding(get: { biometricLockEnabled }, set: { enabled in
+            if !enabled { biometricLockEnabled = false; return }
+            Task {
+                if await PrivacyLock.authenticate() { biometricLockEnabled = true }
+                else { biometricError = true }
+            }
+        })
     }
 }
 

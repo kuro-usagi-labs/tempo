@@ -2,8 +2,10 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
-    @AppStorage("privacyCoverEnabled") private var privacyCoverEnabled = false
+    @AppStorage("privacyCoverEnabled") private var privacyCoverEnabled = true
     @AppStorage("biometricLockEnabled") private var biometricLockEnabled = false
+    @AppStorage("dailyPlanRemindersEnabled") private var remindersEnabled = false
+    @AppStorage("dailyPlanReminderHour") private var reminderHour = 9
     @State private var privacyCovered = false
     @State private var isUnlocked = false
     @AppStorage("onboardingCompleted") private var onboardingCompleted = false
@@ -33,8 +35,12 @@ struct RootView: View {
                 privacyCovered = privacyCoverEnabled
                 if biometricLockEnabled { isUnlocked = false }
             }
-            if phase == .active { privacyCovered = false }
+            if phase == .active {
+                privacyCovered = false
+                if remindersEnabled { Task { await LocalNotifications.requestAndScheduleDailyPlan(hour: reminderHour) } }
+            }
         }
+        .onChange(of: biometricLockEnabled) { _, enabled in if enabled && scenePhase == .active { isUnlocked = true } }
     }
 }
 
@@ -74,8 +80,15 @@ struct TodayView: View {
     @State private var showBreathing = false
     @State private var showHealthCheck = false
     @State private var showBaseline = false
+    @State private var showPrimaryActivity = false
     private var baselineCompleted: Bool { history.baseline != nil }
     private var weeklyPlan: [PlannedActivity] { WeeklyScheduler().beginnerPlan(highStress: (history.baseline?.anxiety ?? 0) >= 8, irritation: history.activeSafetyHold != nil) }
+    private var todayIndex: Int { (Calendar.current.component(.weekday, from: .now) + 5) % 7 }
+    private var todayActivity: ActivityKind {
+        let scheduled = weeklyPlan.first { $0.day == todayIndex }?.kind ?? .breathing
+        if scheduled == .guided, (history.hoursSinceLastSession ?? .infinity) <= 24 || history.guidedSessionsLast7Days >= 3 { return .recovery }
+        return scheduled
+    }
     var body: some View {
         NavigationStack {
             ZStack {
@@ -110,6 +123,7 @@ struct TodayView: View {
             }
             .sheet(isPresented: $showHealthCheck) { HealthCheckView() }
             .sheet(isPresented: $showBaseline) { BaselineView() }
+            .sheet(isPresented: $showPrimaryActivity) { NavigationStack { primaryActivityDestination } }
         }
     }
 
@@ -160,14 +174,14 @@ struct TodayView: View {
             Label("MINGGU 1 · KESADARAN", systemImage: "sparkles")
                 .font(.caption.weight(.bold)).tracking(0.6).foregroundStyle(TempoPalette.cyan)
             VStack(alignment: .leading, spacing: 8) {
-                Text("Mulai aktivitas hari ini").font(.system(.title2, design: .rounded, weight: .bold)).foregroundStyle(TempoPalette.primary)
-                Text("Napas singkat untuk menata ritme, lalu jalan santai jika tubuh terasa siap.")
+                Text(activityLabel(todayActivity)).font(.system(.title2, design: .rounded, weight: .bold)).foregroundStyle(TempoPalette.primary)
+                Text(todayReason)
                     .font(.body).foregroundStyle(TempoPalette.secondary).fixedSize(horizontal: false, vertical: true)
             }
             HStack {
-                Label("20 menit", systemImage: "clock").font(.subheadline.weight(.medium)).foregroundStyle(TempoPalette.secondary)
+                Label(todayDuration, systemImage: "clock").font(.subheadline.weight(.medium)).foregroundStyle(TempoPalette.secondary)
                 Spacer()
-                Button { showBreathing = true } label: {
+                Button { showPrimaryActivity = true } label: {
                     HStack(spacing: 8) {
                         Text("Mulai").fontWeight(.semibold)
                         Image(systemName: "arrow.right").font(.subheadline.weight(.bold))
@@ -184,6 +198,24 @@ struct TodayView: View {
             in: RoundedRectangle(cornerRadius: 28, style: .continuous)
         )
         .overlay { RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 1) }
+    }
+
+    @ViewBuilder private var primaryActivityDestination: some View {
+        switch todayActivity {
+        case .guided: GuidedSessionView()
+        case .breathing: BreathingView(title: "Napas singkat", duration: 240)
+        case .recovery: BreathingView(title: "Pemulihan", duration: 300)
+        case .cardio: ExerciseDetailView(kind: .walk)
+        case .strength: ExerciseDetailView(kind: .strength)
+        case .education: LessonView(title: "Kesadaran sebelum intensitas", body: "Perhatikan perubahan napas, ketegangan, dan dorongan sebelum semuanya terasa mendesak. Mengenali sinyal awal memberi lebih banyak pilihan untuk melambat atau berhenti.")
+        case .review: LessonView(title: "Tinjauan mingguan", body: "Perhatikan apa yang membantu minggu ini: kapan kamu mengenali kenaikan lebih awal, kapan kamu memilih jeda, dan bagaimana tubuh pulih. Istirahat yang dipatuhi juga merupakan progres.")
+        }
+    }
+
+    private var todayDuration: String { switch todayActivity { case .guided: "15–20 menit"; case .breathing: "4 menit"; case .recovery: "5 menit"; case .cardio: "20 menit"; case .strength: "15 menit"; case .education: "3 menit"; case .review: "5 menit" } }
+    private var todayReason: String {
+        if (history.baseline?.anxiety ?? 0) >= 8 { return "Rencana dibuat lebih ringan karena baseline kecemasanmu tinggi." }
+        switch todayActivity { case .recovery: return "Jeda membantu tubuh menyerap latihan sebelumnya."; case .cardio, .strength: return "Gerak mendukung tidur, suasana hati, dan pemulihan."; case .review: return "Tinjau minggu tanpa menghakimi hasil."; default: return "Langkah hari ini mengikuti ritme latihan yang aman." }
     }
 
     private var safetyHoldCard: some View {
@@ -224,8 +256,8 @@ struct TodayView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Ringkasanmu").font(.headline).foregroundStyle(TempoPalette.primary)
             HStack(spacing: 12) {
-                Metric(title: "Kesadaran", value: "—", icon: "eye.fill", accent: TempoPalette.cyan)
-                Metric(title: "Pemulihan", value: "—", icon: "leaf.fill", accent: TempoPalette.success)
+                Metric(title: "Kesadaran", value: "\(history.scoreSnapshot.awareness)", icon: "eye.fill", accent: TempoPalette.cyan)
+                Metric(title: "Pemulihan", value: "\(history.scoreSnapshot.recovery)", icon: "leaf.fill", accent: TempoPalette.success)
             }
         }
     }

@@ -23,6 +23,13 @@ struct LocalSession: Codable, Identifiable {
     let outcome: String?
 }
 
+struct LocalExerciseLog: Codable, Identifiable {
+    let id: UUID
+    let completedAt: Date
+    let kind: String
+    let durationMinutes: Int
+}
+
 struct LocalBaseline: Codable {
     let completedAt: Date
     let onset: String
@@ -53,15 +60,26 @@ private struct LocalProfileState: Codable {
     var programPhase: ProgramPhase = .awareness
 }
 
+private struct LocalExportSnapshot: Codable {
+    let exportedAt: Date
+    let rulesetVersion: String
+    let profile: LocalProfileState
+    let checkIns: [LocalCheckIn]
+    let sessions: [LocalSession]
+    let exercises: [LocalExerciseLog]
+}
+
 @Observable
 @MainActor
 final class LocalHistory {
     private(set) var checkIns: [LocalCheckIn] = []
     private(set) var sessions: [LocalSession] = []
+    private(set) var exercises: [LocalExerciseLog] = []
     private var profile = LocalProfileState()
     private let storageKey = "tempo.local.checkins.v1"
     private let sessionStorageKey = "tempo.local.sessions.v1"
     private let profileStorageKey = "tempo.local.profile.v1"
+    private let exerciseStorageKey = "tempo.local.exercises.v1"
 
     var baseline: LocalBaseline? { profile.baseline }
     var activeSafetyHold: LocalSafetyHold? { profile.safetyHolds.last { $0.resolvedAt == nil } }
@@ -70,6 +88,22 @@ final class LocalHistory {
         if baseline == nil { return .assessmentRequired }
         return profile.programPhase
     }
+    var hoursSinceLastSession: Double? { sessions.first.map { Date.now.timeIntervalSince($0.completedAt) / 3_600 } }
+    var guidedSessionsLast7Days: Int { sessions.filter { $0.completedAt >= Date.now.addingTimeInterval(-7 * 86_400) && $0.terminalState != GuidedSessionState.cancelled.rawValue }.count }
+    var scoreSnapshot: ScoreSnapshot {
+        let sessionCount = max(1, sessions.count)
+        let completed = Double(sessions.filter { $0.terminalState == GuidedSessionState.completed.rawValue }.count) / Double(sessionCount)
+        let recovered = Double(sessions.filter { $0.cycles > 0 }.count) / Double(sessionCount)
+        let earlyAwareness = Double(sessions.filter { $0.terminalState == GuidedSessionState.earlyCompletion.rawValue || $0.cycles > 0 }.count) / Double(sessionCount)
+        let logging = checkIns.isEmpty ? 0 : 1.0
+        let reflection = Double(sessions.filter { $0.postTension != nil }.count) / Double(sessionCount)
+        let adherenceBase = min(1, Double(exercises.count + sessions.count) / 7.0)
+        return ScoreCalculator().calculate(ScoreInputs(earlyPauseRate: earlyAwareness, loggingCompleteness: logging, tensionRecognitionRate: reflection, escalationPredictionRate: earlyAwareness, successfulCycleRatio: recovered, controlledCompletionRatio: completed, thresholdCompliance: recovered, recoveryCompletionRatio: recovered, calmRate: completed, adherenceRate: adherenceBase))
+    }
+
+    func makeExportData() -> Data? {
+        try? JSONEncoder().encode(LocalExportSnapshot(exportedAt: .now, rulesetVersion: RuleEngine.rulesetVersion, profile: profile, checkIns: checkIns, sessions: sessions, exercises: exercises))
+    }
 
     init() { load() }
 
@@ -77,7 +111,7 @@ final class LocalHistory {
         checkIns.insert(LocalCheckIn(id: UUID(), createdAt: .now, intensity: intensity, trigger: trigger.rawValue, intent: intent.rawValue, action: recommendation.action.rawValue, blocksTraining: recommendation.blocksGuidedTraining), at: 0)
         checkIns = Array(checkIns.prefix(100))
         save()
-        if recommendation.blocksGuidedTraining {
+        if recommendation.blocksGuidedTraining && recommendation.reasonCode.hasPrefix("safety.") {
             _ = recordSafetyHold(reasonCode: recommendation.reasonCode, severity: recommendation.severity.rawValue, source: "urge-check-in")
         }
     }
@@ -89,6 +123,12 @@ final class LocalHistory {
         if irritationAfter == true {
             _ = recordSafetyHold(reasonCode: "safety.post-session-irritation", severity: RecommendationSeverity.caution.rawValue, source: "guided-session")
         }
+    }
+
+    func addExercise(kind: String, durationMinutes: Int) {
+        exercises.insert(LocalExerciseLog(id: UUID(), completedAt: .now, kind: kind, durationMinutes: durationMinutes), at: 0)
+        exercises = Array(exercises.prefix(100))
+        save(exercises, for: exerciseStorageKey)
     }
 
     @discardableResult
@@ -131,15 +171,18 @@ final class LocalHistory {
         SecureLocalStore.remove(storageKey)
         SecureLocalStore.remove(sessionStorageKey)
         SecureLocalStore.remove(profileStorageKey)
+        SecureLocalStore.remove(exerciseStorageKey)
         UserDefaults.standard.removeObject(forKey: storageKey)
         UserDefaults.standard.removeObject(forKey: sessionStorageKey)
         profile = LocalProfileState()
+        exercises = []
     }
 
     private func load() {
         checkIns = load([LocalCheckIn].self, for: storageKey, defaultValue: [])
         sessions = load([LocalSession].self, for: sessionStorageKey, defaultValue: [])
         profile = load(LocalProfileState.self, for: profileStorageKey, defaultValue: LocalProfileState())
+        exercises = load([LocalExerciseLog].self, for: exerciseStorageKey, defaultValue: [])
         if profile.safetyHolds.isEmpty, let blocked = checkIns.first(where: \.blocksTraining) {
             _ = recordSafetyHold(reasonCode: "safety.migrated.\(blocked.action)", severity: RecommendationSeverity.medical.rawValue, source: "migration")
         }

@@ -48,7 +48,7 @@ public struct RuleEngine: Sendable {
             return Recommendation(.education, .caution, "readiness.baseline_required", "Complete the baseline before starting guided training.", blocked: true)
         }
         if (c.hoursSinceLastSession ?? .infinity) <= 24 || c.guidedSessionsLast7Days >= 3 {
-            return Recommendation(.recovery, .caution, "readiness.recent_session", "Rest is part of the program. Another session now is unlikely to help.")
+            return Recommendation(.recovery, .caution, "readiness.recent_session", "Rest is part of the program. Another session now is unlikely to help.", blocked: true)
         }
         if c.anxiety >= 8 { return Recommendation(.regulate, .caution, "readiness.high_anxiety", "Settle first with five minutes of breathing, then reassess.") }
         if c.trigger == .boredom || c.trigger == .stress || c.urgeIntensity <= 4 {
@@ -85,8 +85,8 @@ public struct PlannedActivity: Equatable, Sendable { public let day: Int; public
 public struct WeeklyScheduler: Sendable {
     public init() {}
     public func beginnerPlan(highStress: Bool = false, irritation: Bool = false) -> [PlannedActivity] {
-        if irritation { return [.init(day: 0, kind: .breathing), .init(day: 1, kind: .recovery), .init(day: 3, kind: .cardio), .init(day: 6, kind: .review)] }
-        if highStress { return [.init(day: 0, kind: .breathing), .init(day: 2, kind: .guided), .init(day: 4, kind: .cardio), .init(day: 6, kind: .review)] }
+        if irritation { return [.init(day: 0, kind: .breathing), .init(day: 1, kind: .recovery), .init(day: 2, kind: .cardio), .init(day: 3, kind: .recovery), .init(day: 4, kind: .education), .init(day: 5, kind: .cardio), .init(day: 6, kind: .review)] }
+        if highStress { return [.init(day: 0, kind: .breathing), .init(day: 1, kind: .recovery), .init(day: 2, kind: .guided), .init(day: 3, kind: .cardio), .init(day: 4, kind: .recovery), .init(day: 5, kind: .education), .init(day: 6, kind: .review)] }
         return [.init(day: 0, kind: .breathing), .init(day: 1, kind: .guided), .init(day: 2, kind: .recovery), .init(day: 3, kind: .cardio), .init(day: 4, kind: .guided), .init(day: 5, kind: .strength), .init(day: 6, kind: .review)]
     }
 }
