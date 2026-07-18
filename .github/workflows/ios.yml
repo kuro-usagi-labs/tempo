@@ -10,7 +10,7 @@ jobs:
   test-and-package:
     runs-on: macos-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - name: Install project generator
@@ -18,35 +18,7 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
       - name: Compile app for simulator
-        run: |
-          set -o pipefail
-          xcodebuild build -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO 2>&1 | tee build.log
-          result=${PIPESTATUS[0]}
-          if [ "$result" -ne 0 ]; then
-            {
-              echo "## iOS compiler diagnostics"
-              echo '```text'
-              tail -n 80 build.log
-              echo '```'
-            } >> "$GITHUB_STEP_SUMMARY"
-            tail -n 40 build.log | while IFS= read -r line; do echo "::error::$line"; done
-            exit "$result"
-          fi
-      - name: Upload compile diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: compile-diagnostics
-          path: build.log
-          if-no-files-found: warn
-      - name: Persist failed compiler output for diagnosis
-        if: failure()
-        run: |
-          cp build.log .github/ci-build-failure.log
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/ci-build-failure.log
-          git diff --cached --quiet || (git commit -m "ci: capture iOS compiler output" && git push)
+        run: xcodebuild build -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO
       - name: Build archive
         run: xcodebuild archive -project Tempo.xcodeproj -scheme Tempo -archivePath "$PWD/build/Tempo.xcarchive" -sdk iphoneos CODE_SIGNING_ALLOWED=NO
       - name: Create unsigned IPA artifact
