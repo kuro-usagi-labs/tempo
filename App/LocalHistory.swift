@@ -11,6 +11,13 @@ struct LocalCheckIn: Codable, Identifiable {
     let blocksTraining: Bool
 }
 
+struct LocalUrgeOutcome: Codable, Identifiable {
+    let id: UUID
+    let completedAt: Date
+    let initialIntensity: Int
+    let finalIntensity: Int
+}
+
 struct LocalArousalEvent: Codable {
     let timestampOffset: Int
     let level: Int
@@ -58,6 +65,18 @@ struct LocalExerciseLog: Codable, Identifiable {
     let painReported: Bool?
 }
 
+enum LocalPlanStatus: String, Codable { case planned, completed, skipped }
+
+struct LocalPlanDay: Codable, Identifiable {
+    let id: UUID
+    let date: Date
+    let kind: ActivityKind
+    var status: LocalPlanStatus
+    let phase: ProgramPhase
+    let generatedAt: Date
+    let rulesetVersion: String
+}
+
 struct LocalBaseline: Codable {
     let completedAt: Date
     let onset: String
@@ -99,28 +118,43 @@ private struct LocalExportSnapshot: Codable {
     let rulesetVersion: String
     let profile: LocalProfileState
     let checkIns: [LocalCheckIn]
+    let urgeOutcomes: [LocalUrgeOutcome]
     let sessions: [LocalSession]
     let exercises: [LocalExerciseLog]
+    let plan: [LocalPlanDay]
 }
 
 @Observable
 @MainActor
 final class LocalHistory {
     private(set) var checkIns: [LocalCheckIn] = []
+    private(set) var urgeOutcomes: [LocalUrgeOutcome] = []
     private(set) var sessions: [LocalSession] = []
     private(set) var exercises: [LocalExerciseLog] = []
+    private(set) var plannedDays: [LocalPlanDay] = []
     private var profile = LocalProfileState()
     private(set) var hasPendingSafetyWrite = false
     private let storageKey = "tempo.local.checkins.v1"
     private let sessionStorageKey = "tempo.local.sessions.v1"
+    private let urgeOutcomeStorageKey = "tempo.local.urge-outcomes.v1"
     private let profileStorageKey = "tempo.local.profile.v1"
     private let exerciseStorageKey = "tempo.local.exercises.v1"
+    private let planStorageKey = "tempo.local.plan.v1"
     private let pendingSafetyStorageKey = "tempo.pending-safety-lock.v1"
 
     var baseline: LocalBaseline? { profile.baseline }
     var safetyHoldCount: Int { profile.safetyHolds.count }
     var activeSafetyHold: LocalSafetyHold? { profile.safetyHolds.last { $0.resolvedAt == nil } }
     var hasSafetyBlock: Bool { activeSafetyHold != nil || hasPendingSafetyWrite }
+    var currentWeekPlan: [LocalPlanDay] {
+        let start = weekStart(for: .now)
+        let end = Calendar.current.date(byAdding: .day, value: 7, to: start) ?? start
+        return plannedDays.filter { $0.date >= start && $0.date < end }.sorted { $0.date < $1.date }
+    }
+    var todayPlan: LocalPlanDay? {
+        let today = Calendar.current.startOfDay(for: .now)
+        return currentWeekPlan.first { Calendar.current.isDate($0.date, inSameDayAs: today) }
+    }
     var guidedEligibility: GuidedEligibility {
         GuidedEligibilityEvaluator().evaluate(
             programPhase: effectiveProgramPhase,
@@ -209,18 +243,19 @@ final class LocalHistory {
         }
         let calm = ewma(calmValues)
         let cutoff = Date.now.addingTimeInterval(-7 * 86_400)
-        let activeDays = Set(trainingSessions.filter { $0.completedAt >= cutoff }.map { Calendar.current.startOfDay(for: $0.completedAt) } + exercises.filter { $0.completedAt >= cutoff }.map { Calendar.current.startOfDay(for: $0.completedAt) })
-        let adherenceBase = min(1, Double(activeDays.count) / 5.0)
+        let completedPlanDays = Set(plannedDays.filter { $0.date >= cutoff && $0.status == .completed }.map { Calendar.current.startOfDay(for: $0.date) })
+        let adherenceBase = min(1, Double(completedPlanDays.count) / 7.0)
         return ScoreCalculator().calculate(ScoreInputs(earlyPauseRate: earlyAwareness, loggingCompleteness: logging, tensionRecognitionRate: reflection, escalationPredictionRate: thresholdCompliance, successfulCycleRatio: recovered, controlledCompletionRatio: completed, thresholdCompliance: thresholdCompliance, recoveryCompletionRatio: recovered, calmRate: calm, adherenceRate: adherenceBase))
     }
 
     func makeExportData() -> Data? {
-        try? JSONEncoder().encode(LocalExportSnapshot(exportedAt: .now, rulesetVersion: RuleEngine.rulesetVersion, profile: profile, checkIns: checkIns, sessions: sessions, exercises: exercises))
+        try? JSONEncoder().encode(LocalExportSnapshot(exportedAt: .now, rulesetVersion: RuleEngine.rulesetVersion, profile: profile, checkIns: checkIns, urgeOutcomes: urgeOutcomes, sessions: sessions, exercises: exercises, plan: plannedDays))
     }
 
     init() {
         hasPendingSafetyWrite = UserDefaults.standard.bool(forKey: pendingSafetyStorageKey)
         load()
+        refreshPlan()
     }
 
     @discardableResult
@@ -233,6 +268,16 @@ final class LocalHistory {
         updated = Array(updated.prefix(100))
         guard save(updated, for: storageKey) else { return false }
         checkIns = updated
+        return true
+    }
+
+    @discardableResult
+    func addUrgeOutcome(initialIntensity: Int, finalIntensity: Int) -> Bool {
+        var updated = urgeOutcomes
+        updated.insert(LocalUrgeOutcome(id: UUID(), completedAt: .now, initialIntensity: initialIntensity, finalIntensity: finalIntensity), at: 0)
+        updated = Array(updated.prefix(100))
+        guard save(updated, for: urgeOutcomeStorageKey) else { return false }
+        urgeOutcomes = updated
         return true
     }
 
@@ -250,6 +295,7 @@ final class LocalHistory {
         updated = Array(updated.prefix(520))
         guard save(updated, for: sessionStorageKey) else { return false }
         sessions = updated
+        refreshPlan(force: true)
         return true
     }
 
@@ -279,6 +325,7 @@ final class LocalHistory {
         }
         profile = updated
         if baseline.hasSafetySymptoms { clearPendingSafetyWrite() }
+        refreshPlan(force: true)
         return true
     }
 
@@ -294,6 +341,7 @@ final class LocalHistory {
                 guard persistProfile(updated) else { markPendingSafetyWrite(); return false }
                 profile = updated
                 clearPendingSafetyWrite()
+                refreshPlan(force: true)
             }
             return true
         }
@@ -301,6 +349,7 @@ final class LocalHistory {
         guard persistProfile(updated) else { markPendingSafetyWrite(); return false }
         profile = updated
         clearPendingSafetyWrite()
+        refreshPlan(force: true)
         return true
     }
 
@@ -318,6 +367,7 @@ final class LocalHistory {
         }
         guard persistProfile(updated) else { return false }
         profile = updated
+        refreshPlan(force: true)
         return true
     }
 
@@ -327,9 +377,11 @@ final class LocalHistory {
         UserDefaults.standard.removeObject(forKey: storageKey)
         UserDefaults.standard.removeObject(forKey: sessionStorageKey)
         checkIns = []
+        urgeOutcomes = []
         sessions = []
         profile = LocalProfileState()
         exercises = []
+        plannedDays = []
         hasPendingSafetyWrite = false
         UserDefaults.standard.removeObject(forKey: pendingSafetyStorageKey)
         return true
@@ -345,11 +397,70 @@ final class LocalHistory {
         return true
     }
 
+    @discardableResult
+    func refreshPlan(force: Bool = false) -> Bool {
+        let calendar = Calendar.current
+        let start = weekStart(for: .now)
+        let end = calendar.date(byAdding: .day, value: 7, to: start) ?? start
+        let existing = plannedDays.filter { $0.date >= start && $0.date < end }
+        let phase = effectiveProgramPhase
+        let needsRegeneration = force || existing.count != 7 || existing.contains { $0.phase != phase || $0.rulesetVersion != RuleEngine.rulesetVersion }
+        var updatedWeek: [LocalPlanDay]
+        if needsRegeneration {
+            let template = WeeklyScheduler().plan(for: phase, highStress: isHighStress, irritation: hasSafetyBlock)
+            updatedWeek = template.compactMap { activity in
+                guard let date = calendar.date(byAdding: .day, value: activity.day, to: start) else { return nil }
+                if let retained = existing.first(where: { calendar.isDate($0.date, inSameDayAs: date) }), retained.status != .planned || calendar.isDateInToday(date) { return retained }
+                return LocalPlanDay(id: UUID(), date: date, kind: activity.kind, status: .planned, phase: phase, generatedAt: .now, rulesetVersion: RuleEngine.rulesetVersion)
+            }
+        } else {
+            updatedWeek = existing
+        }
+        let today = calendar.startOfDay(for: .now)
+        for index in updatedWeek.indices where updatedWeek[index].date < today && updatedWeek[index].status == .planned {
+            updatedWeek[index].status = .skipped
+        }
+        let otherWeeks = plannedDays.filter { $0.date < start || $0.date >= end }
+        let updated = (otherWeeks + updatedWeek).sorted { $0.date < $1.date }
+        guard save(updated, for: planStorageKey) else { return false }
+        plannedDays = updated
+        return true
+    }
+
+    @discardableResult
+    func completeTodayPlan(kind: ActivityKind) -> Bool {
+        updateTodayPlan(kind: kind, status: .completed)
+    }
+
+    @discardableResult
+    func skipTodayPlan() -> Bool {
+        updateTodayPlan(kind: nil, status: .skipped)
+    }
+
+    func applyPendingPlanActions() {
+        let key = "tempo.pending-skip-plan-date"
+        guard let date = UserDefaults.standard.object(forKey: key) as? Date else { return }
+        if Calendar.current.isDateInToday(date) { _ = skipTodayPlan() }
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+
+    private func updateTodayPlan(kind: ActivityKind?, status: LocalPlanStatus) -> Bool {
+        let calendar = Calendar.current
+        guard let index = plannedDays.firstIndex(where: { calendar.isDateInToday($0.date) && (kind == nil || $0.kind == kind) }) else { return false }
+        var updated = plannedDays
+        updated[index].status = status
+        guard save(updated, for: planStorageKey) else { return false }
+        plannedDays = updated
+        return true
+    }
+
     private func load() {
         checkIns = load([LocalCheckIn].self, for: storageKey, defaultValue: [])
+        urgeOutcomes = load([LocalUrgeOutcome].self, for: urgeOutcomeStorageKey, defaultValue: [])
         sessions = load([LocalSession].self, for: sessionStorageKey, defaultValue: [])
         profile = load(LocalProfileState.self, for: profileStorageKey, defaultValue: LocalProfileState())
         exercises = load([LocalExerciseLog].self, for: exerciseStorageKey, defaultValue: [])
+        plannedDays = load([LocalPlanDay].self, for: planStorageKey, defaultValue: [])
         if profile.safetyHolds.isEmpty, let blocked = checkIns.first(where: \.blocksTraining) {
             _ = recordSafetyHold(reasonCode: "safety.migrated.\(blocked.action)", severity: RecommendationSeverity.medical.rawValue, source: "migration")
         }
@@ -390,6 +501,14 @@ final class LocalHistory {
 
     private func sessionDroppingRawEvents(_ value: LocalSession) -> LocalSession {
         LocalSession(id: value.id, startedAt: value.startedAt, completedAt: value.completedAt, cycles: value.cycles, terminalState: value.terminalState, targetCycles: value.targetCycles, pauseThreshold: value.pauseThreshold, maximumDurationSeconds: value.maximumDurationSeconds, preAnxiety: value.preAnxiety, durationSeconds: value.durationSeconds, lateStopOccurred: value.lateStopOccurred, postAnxiety: value.postAnxiety, postTension: value.postTension, painAfter: value.painAfter, irritationAfter: value.irritationAfter, outcome: value.outcome, note: value.note, arousalEvents: nil, pauseCycles: nil)
+    }
+
+    private func weekStart(for date: Date) -> Date {
+        let calendar = Calendar.current
+        let day = calendar.startOfDay(for: date)
+        let weekday = calendar.component(.weekday, from: day)
+        let daysFromMonday = (weekday + 5) % 7
+        return calendar.date(byAdding: .day, value: -daysFromMonday, to: day) ?? day
     }
 
     private func markPendingSafetyWrite() {

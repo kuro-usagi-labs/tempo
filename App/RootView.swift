@@ -2,6 +2,7 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(LocalHistory.self) private var history
     @AppStorage("biometricLockEnabled") private var biometricLockEnabled = false
     @AppStorage("dailyPlanRemindersEnabled") private var remindersEnabled = false
     @AppStorage("dailyPlanReminderHour") private var reminderHour = 9
@@ -61,6 +62,8 @@ struct RootView: View {
             }
             if phase == .active {
                 privacyCovered = false
+                history.refreshPlan()
+                history.applyPendingPlanActions()
                 if biometricLockEnabled && !PrivacyLock.isAvailable {
                     biometricLockEnabled = false
                     isUnlocked = true
@@ -69,6 +72,7 @@ struct RootView: View {
             }
         }
         .onChange(of: biometricLockEnabled) { _, enabled in if enabled && scenePhase == .active { isUnlocked = true } }
+        .onReceive(NotificationCenter.default.publisher(for: .tempoSkipTodayPlan)) { _ in history.applyPendingPlanActions() }
     }
 }
 
@@ -115,6 +119,9 @@ struct TodayView: View {
     @State private var showPrimaryActivity = false
     private var baselineCompleted: Bool { history.baseline != nil }
     private var weeklyPlan: [PlannedActivity] {
+        if history.currentWeekPlan.count == 7 {
+            return history.currentWeekPlan.enumerated().map { PlannedActivity(day: $0.offset, kind: $0.element.kind) }
+        }
         let plan = WeeklyScheduler().plan(for: history.effectiveProgramPhase, highStress: history.isHighStress, irritation: history.hasSafetyBlock)
         guard history.baseline?.hasExerciseRestriction == true else { return plan }
         return plan.map { activity in
@@ -243,12 +250,12 @@ struct TodayView: View {
         case .guided:
             if history.guidedEligibility.isAllowed { GuidedSessionView() }
             else { GuidedEligibilityBlockedView(eligibility: history.guidedEligibility) }
-        case .breathing: BreathingView(title: "Napas singkat", duration: 240)
-        case .recovery: BreathingView(title: "Pemulihan", duration: 300)
+        case .breathing: BreathingView(title: "Napas singkat", duration: 240, plannedKind: .breathing)
+        case .recovery: BreathingView(title: "Pemulihan", duration: 300, plannedKind: .recovery)
         case .cardio: ExerciseDetailView(kind: .walk)
         case .strength: ExerciseDetailView(kind: .strength)
-        case .education: LessonView(title: "Kesadaran sebelum intensitas", body: "Perhatikan perubahan napas, ketegangan, dan dorongan sebelum semuanya terasa mendesak. Mengenali sinyal awal memberi lebih banyak pilihan untuk melambat atau berhenti.")
-        case .review: LessonView(title: "Tinjauan mingguan", body: "Perhatikan apa yang membantu minggu ini: kapan kamu mengenali kenaikan lebih awal, kapan kamu memilih jeda, dan bagaimana tubuh pulih. Istirahat yang dipatuhi juga merupakan progres.")
+        case .education: LessonView(title: "Kesadaran sebelum intensitas", body: "Perhatikan perubahan napas, ketegangan, dan dorongan sebelum semuanya terasa mendesak. Mengenali sinyal awal memberi lebih banyak pilihan untuk melambat atau berhenti.", plannedKind: .education)
+        case .review: LessonView(title: "Tinjauan mingguan", body: "Perhatikan apa yang membantu minggu ini: kapan kamu mengenali kenaikan lebih awal, kapan kamu memilih jeda, dan bagaimana tubuh pulih. Istirahat yang dipatuhi juga merupakan progres.", plannedKind: .review)
         }
     }
 
@@ -340,6 +347,11 @@ struct TodayView: View {
                     Image(systemName: activityIcon(activity.kind)).font(.system(size: 14, weight: .semibold)).foregroundStyle(TempoPalette.cyan).frame(width: 24)
                     Text(activityLabel(activity.kind)).font(.subheadline).foregroundStyle(TempoPalette.primary)
                     Spacer()
+                    if let status = planStatus(for: activity.day), status != .planned {
+                        Image(systemName: status == .completed ? "checkmark.circle.fill" : "minus.circle.fill")
+                            .foregroundStyle(status == .completed ? TempoPalette.success : TempoPalette.secondary)
+                            .accessibilityLabel(status == .completed ? "Selesai" : "Dilewati")
+                    }
                 }
                 .frame(minHeight: 44)
                 if activity.day != weeklyPlan.last?.day { Divider().overlay(Color.white.opacity(0.06)) }
@@ -348,6 +360,11 @@ struct TodayView: View {
         .padding(20)
         .background(TempoPalette.surface1, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay { RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Color.white.opacity(0.07), lineWidth: 1) }
+    }
+
+    private func planStatus(for day: Int) -> LocalPlanStatus? {
+        guard history.currentWeekPlan.indices.contains(day) else { return nil }
+        return history.currentWeekPlan[day].status
     }
 }
 

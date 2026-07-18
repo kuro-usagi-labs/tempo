@@ -1,6 +1,10 @@
 import Foundation
 import UserNotifications
 
+extension Notification.Name {
+    static let tempoSkipTodayPlan = Notification.Name("tempo.skip-today-plan")
+}
+
 @MainActor
 enum LocalNotifications {
     static func removeAll() {
@@ -35,6 +39,11 @@ enum LocalNotifications {
     }
 
     static func handle(actionIdentifier: String, soundEnabled: Bool) async {
+        if actionIdentifier == "TEMPO_SKIP_TODAY" {
+            UserDefaults.standard.set(Date.now, forKey: "tempo.pending-skip-plan-date")
+            NotificationCenter.default.post(name: .tempoSkipTodayPlan, object: nil)
+            return
+        }
         guard actionIdentifier == "TEMPO_REMIND_LATER" else { return }
         let content = UNMutableNotificationContent()
         content.title = "TEMPO"
