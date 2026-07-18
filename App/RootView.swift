@@ -4,8 +4,10 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("privacyLockEnabled") private var privacyLockEnabled = false
     @State private var privacyCovered = false
+    @AppStorage("onboardingCompleted") private var onboardingCompleted = false
     var body: some View {
         ZStack {
+        if onboardingCompleted {
         TabView {
             TodayView().tabItem { Label("Hari ini", systemImage: "sparkles") }
             TrainingView().tabItem { Label("Latihan", systemImage: "figure.mind.and.body") }
@@ -13,6 +15,9 @@ struct RootView: View {
             LearnView().tabItem { Label("Belajar", systemImage: "book") }
             SettingsView().tabItem { Label("Pengaturan", systemImage: "gearshape") }
         }.tint(Color(red: 0.47, green: 0.42, blue: 1))
+        } else {
+            OnboardingView()
+        }
         if privacyCovered {
             Color.black.ignoresSafeArea()
             VStack(spacing: 12) {
@@ -25,6 +30,36 @@ struct RootView: View {
             if privacyLockEnabled && phase != .active { privacyCovered = true }
             if phase == .active { privacyCovered = false }
         }
+    }
+}
+
+struct OnboardingView: View {
+    @AppStorage("onboardingCompleted") private var onboardingCompleted = false
+    @AppStorage("discreetTerminology") private var discreetTerminology = false
+    @State private var page = 0
+    @State private var confirmedAdult = false
+    private let pages = [
+        ("Build control without pressure", "TEMPO memberi rencana terstruktur untuk kesadaran, jeda, pemulihan, gerak, dan kebiasaan sehat."),
+        ("Privat secara desain", "Jawaban dan riwayatmu tetap pada iPhone ini. Tidak ada akun dan tidak ada internet yang dibutuhkan."),
+        ("Bukan diagnosis", "Nyeri, perih saat kencing, cairan tidak biasa, darah, demam, atau perubahan mendadak perlu penilaian profesional."),
+        ("Istirahat juga latihan", "TEMPO dapat menyarankan napas, jalan, atau pemulihan, bukan sesi tambahan.")
+    ]
+    var body: some View {
+        VStack(spacing: 24) {
+            Spacer()
+            Image(systemName: "circle.hexagongrid.fill").font(.system(size: 64)).foregroundStyle(.indigo)
+            Text(pages[page].0).font(.largeTitle.bold()).multilineTextAlignment(.center)
+            Text(pages[page].1).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            HStack { ForEach(0..<pages.count, id: \.self) { index in Capsule().fill(index == page ? Color.indigo : Color.white.opacity(0.2)).frame(width: index == page ? 28 : 8, height: 8) } }
+            if page == pages.count - 1 {
+                Toggle("Saya mengonfirmasi bahwa saya berusia 18 tahun atau lebih", isOn: $confirmedAdult).font(.subheadline)
+                Toggle("Gunakan istilah privat", isOn: $discreetTerminology)
+            }
+            Spacer()
+            Button(page == pages.count - 1 ? "Mulai dengan aman" : "Lanjut") {
+                if page == pages.count - 1 { onboardingCompleted = true } else { page += 1 }
+            }.buttonStyle(.borderedProminent).controlSize(.large).disabled(page == pages.count - 1 && !confirmedAdult)
+        }.padding(28).background(Color.black.ignoresSafeArea())
     }
 }
 
