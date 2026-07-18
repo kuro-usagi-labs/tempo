@@ -19,6 +19,9 @@ jobs:
         run: xcodegen generate
       - name: Run deterministic domain tests
         run: swift test
+      - name: Enforce local-only networking policy
+        run: |
+          ! rg --glob '*.swift' 'URLSession|NWConnection|Alamofire' App Sources
       - name: Compile app for simulator
         run: xcodebuild build -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO
       - name: Build archive
