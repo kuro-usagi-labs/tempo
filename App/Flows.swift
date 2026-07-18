@@ -219,12 +219,27 @@ struct LearnView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Dasar tubuh") { Text("Gairah adalah kurva, bukan sakelar"); Text("Pre-ejakulat bukan kegagalan") }
-                Section("Keterampilan") { Text("Kapan perlu melambat"); Text("Napas pemulihan") }
-                Section("Kesehatan") { Text("Tanda yang perlu diperiksa") }
+                Section("Dasar tubuh") {
+                    NavigationLink("Gairah adalah kurva, bukan sakelar") { LessonView(title: "Gairah adalah kurva", body: "Intensitas dapat naik dan turun. Mengenali perubahan lebih awal memberi ruang untuk memperlambat atau berhenti tanpa tekanan.") }
+                    NavigationLink("Pre-ejakulat bukan kegagalan") { LessonView(title: "Respons normal", body: "Pre-ejakulat adalah respons tubuh yang normal dan tidak berarti sesi gagal. Fokus aplikasi ini adalah kesadaran dan pilihan yang aman.") }
+                }
+                Section("Keterampilan") {
+                    NavigationLink("Kapan perlu melambat") { LessonView(title: "Melambat lebih awal", body: "Saat intensitas mulai meningkat, kurangi tempo dan tekanan. Rilekskan rahang, perut, paha, dan bokong.") }
+                    NavigationLink("Napas pemulihan") { BreathingView(title: "Napas pemulihan", duration: 60) }
+                }
+                Section("Kesehatan") {
+                    NavigationLink("Tanda yang perlu diperiksa") { LessonView(title: "Hentikan latihan dan cari bantuan", body: "Hentikan latihan dan pertimbangkan penilaian profesional bila ada nyeri berat, perdarahan, demam, perih saat kencing, cairan tidak biasa, cedera akut, atau perubahan fungsi yang mendadak.") }
+                }
             }.navigationTitle("Belajar")
         }
     }
+}
+
+struct LessonView: View {
+    let title: String
+    let content: String
+    init(title: String, body: String) { self.title = title; self.content = body }
+    var body: some View { ScrollView { VStack(alignment: .leading, spacing: 20) { Text(title).font(.largeTitle.bold()); Text(content).font(.body).lineSpacing(5); Text("TEMPO adalah panduan wellness dan tidak menggantikan diagnosis atau perawatan medis.").font(.footnote).foregroundStyle(.secondary) }.padding() }.navigationTitle("Belajar").navigationBarTitleDisplayMode(.inline) }
 }
 
 struct SettingsView: View {
