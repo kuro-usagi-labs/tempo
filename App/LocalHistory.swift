@@ -16,6 +16,11 @@ struct LocalSession: Codable, Identifiable {
     let completedAt: Date
     let cycles: Int
     let terminalState: String
+    let durationSeconds: Int?
+    let postAnxiety: Int?
+    let postTension: Int?
+    let irritationAfter: Bool?
+    let outcome: String?
 }
 
 @Observable
@@ -34,8 +39,8 @@ final class LocalHistory {
         save()
     }
 
-    func addSession(cycles: Int, terminalState: GuidedSessionState) {
-        sessions.insert(LocalSession(id: UUID(), completedAt: .now, cycles: cycles, terminalState: terminalState.rawValue), at: 0)
+    func addSession(cycles: Int, terminalState: GuidedSessionState, durationSeconds: Int? = nil, postAnxiety: Int? = nil, postTension: Int? = nil, irritationAfter: Bool? = nil, outcome: String? = nil) {
+        sessions.insert(LocalSession(id: UUID(), completedAt: .now, cycles: cycles, terminalState: terminalState.rawValue, durationSeconds: durationSeconds, postAnxiety: postAnxiety, postTension: postTension, irritationAfter: irritationAfter, outcome: outcome), at: 0)
         sessions = Array(sessions.prefix(100))
         save(sessions, for: sessionStorageKey)
     }

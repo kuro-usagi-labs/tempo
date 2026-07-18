@@ -81,89 +81,264 @@ struct GuidedSessionView: View {
     @Environment(LocalHistory.self) private var history
     @State private var machine = GuidedSessionMachine()
     @State private var arousal = 3
-    @State private var seconds = 0
+    @State private var anxiety = 3
     @State private var safetyConcern = false
-    @State private var isPrepared = false
+    @State private var hasPrivateTime = true
+    @State private var willFollowPrompts = true
+    @State private var sessionStartedAt: Date?
+    @State private var prepareStartedAt: Date?
+    @State private var recoveryStartedAt: Date?
+    @State private var totalElapsed = 0
+    @State private var prepareElapsed = 0
+    @State private var recoveryElapsed = 0
+    @State private var strongWarningPlayed = false
+    @State private var gentleWarningPlayed = false
     @State private var resultSaved = false
+    @State private var showEndOptions = false
+    @State private var showPostCheck = false
+    @State private var postAnxiety = 3
+    @State private var postTension = 3
+    @State private var irritationAfter = false
+    @State private var outcome = "Lebih tenang"
     @AppStorage("hapticsEnabled") private var hapticsEnabled = true
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    private let preparationMinimum = 90
+    private let recoveryMinimum = 30
+    private let maximumSessionDuration = 1_200
 
     var body: some View {
-        VStack(spacing: 22) {
-            Text(stateTitle).font(.title.bold()).multilineTextAlignment(.center)
-            Text(stateMessage).foregroundStyle(.secondary).multilineTextAlignment(.center)
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 22) {
+                if !showPostCheck {
+                    Text(stateTitle).font(.title.bold()).multilineTextAlignment(.center)
+                    Text(stateMessage).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                }
 
-            if machine.state == .precheck {
-                Toggle("Saya memiliki nyeri atau iritasi", isOn: $safetyConcern)
-                    .padding().background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
-                Button(safetyConcern ? "Lihat health check" : "Mulai persiapan") {
-                    if safetyConcern { machine.abortForSafety() } else { machine.start() }
-                }.buttonStyle(.borderedProminent).controlSize(.large)
-            } else if machine.state == .prepare {
-                BreathingOrbView()
-                Button("Saya siap") { machine.beginActive() }.buttonStyle(.borderedProminent).controlSize(.large)
-            } else if [.activeLow, .activeRising, .warning].contains(machine.state) {
-                arousalControls
-            } else if machine.state == .pausedRecovery {
-                BreathingOrbView()
-                Text("Pemulihan · \(max(0, 30 - seconds)) dtk").font(.headline.monospacedDigit())
-                Button("Intensitas sudah 4 atau lebih rendah") {
-                    guard seconds >= 30 else { return }
-                    machine.recovered(level: arousal)
-                }.buttonStyle(.borderedProminent).disabled(seconds < 30 || arousal > 4)
-            } else if machine.state == .resumeReady {
-                Text("Siklus \(machine.cycles) selesai").font(.headline)
-                Button("Lanjut perlahan") { machine.beginActive() }.buttonStyle(.borderedProminent).controlSize(.large)
-            } else {
-                terminalContent
+                Group {
+                    if showPostCheck { postCheckContent }
+                    else if machine.state == .precheck { precheckContent }
+                    else if machine.state == .prepare { prepareContent }
+                    else if [.activeLow, .activeRising, .warning].contains(machine.state) { arousalControls }
+                    else if machine.state == .pausedRecovery { recoveryContent }
+                    else if machine.state == .resumeReady { resumeContent }
+                    else { terminalContent }
+                }
+
+                if !showPostCheck && !isTerminal {
+                    Button(machine.state == .precheck ? "Batal" : "Akhiri sesi", role: .cancel) {
+                        if machine.state == .precheck { cancelAndDismiss() } else { showEndOptions = true }
+                    }
+                    .foregroundStyle(.secondary)
+                    .frame(minHeight: 44)
+                }
             }
-
-            Button("Akhiri sesi", role: .cancel) { dismiss() }.foregroundStyle(.secondary)
+            .padding(24)
         }
-        .padding()
-        .background(machine.state == .warning ? Color.red.opacity(0.22) : Color.black)
+        .background(machine.state == .pausedRecovery ? Color.red.opacity(0.12) : Color.black)
         .navigationBarBackButtonHidden(true)
-        .onReceive(timer) { _ in tick() }
-        .onChange(of: arousal) { _, newValue in
-            guard [.activeLow, .activeRising, .warning].contains(machine.state) else { return }
-            machine.rising(level: newValue, threshold: 7)
-            if newValue >= 7 { playWarningHaptic() }
+        .onReceive(timer) { now in updateTimes(now: now) }
+        .onChange(of: arousal) { _, newValue in handleArousalChange(newValue) }
+        .onChange(of: machine.state) { _, newState in handleStateChange(newState) }
+        .confirmationDialog("Bagaimana ingin mengakhiri sesi?", isPresented: $showEndOptions, titleVisibility: .visible) {
+            Button("Selesaikan dan isi refleksi") { machine.complete() }
+            Button("Batalkan sesi", role: .destructive) { cancelAndDismiss() }
+            Button("Lanjutkan sesi", role: .cancel) {}
         }
-        .onChange(of: machine.state) { _, newState in
-            guard !resultSaved, [.completed, .earlyCompletion, .safetyAbort, .timeLimitReached].contains(newState) else { return }
-            history.addSession(cycles: machine.cycles, terminalState: newState)
-            resultSaved = true
+    }
+
+    private var precheckContent: some View {
+        VStack(spacing: 18) {
+            valueControl(title: "Kecemasan saat ini", value: $anxiety)
+            valueControl(title: "Intensitas saat ini", value: $arousal)
+            Toggle("Saya mengalami nyeri atau iritasi", isOn: $safetyConcern)
+            Toggle("Saya punya waktu dan ruang privat", isOn: $hasPrivateTime)
+            Toggle("Saya bersedia mengikuti instruksi berhenti", isOn: $willFollowPrompts)
+            Button(safetyConcern ? "Hentikan dan lihat panduan" : "Mulai persiapan") {
+                if safetyConcern { machine.abortForSafety() }
+                else {
+                    sessionStartedAt = .now
+                    prepareStartedAt = .now
+                    postAnxiety = anxiety
+                    machine.start()
+                }
+            }
+            .buttonStyle(.borderedProminent).controlSize(.large)
+            .disabled(!safetyConcern && (!hasPrivateTime || !willFollowPrompts))
+        }
+    }
+
+    private var prepareContent: some View {
+        VStack(spacing: 18) {
+            BreathingOrbView()
+            Text(prepareElapsed >= preparationMinimum ? "Persiapan selesai" : "Tenangkan tubuh · \(preparationMinimum - prepareElapsed) dtk")
+                .font(.headline.monospacedDigit())
+            Text("Rilekskan rahang, perut, paha, dan bokong. Durasi bukan target.")
+                .foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Button("Saya siap mulai") { beginActive() }
+                .buttonStyle(.borderedProminent).controlSize(.large)
+                .disabled(prepareElapsed < preparationMinimum)
         }
     }
 
     private var arousalControls: some View {
         VStack(spacing: 16) {
+            elapsedLabel
             Text("Intensitas: \(arousal)").font(.system(size: 48, weight: .bold, design: .rounded))
                 .foregroundStyle(arousal >= 7 ? .red : arousal >= 6 ? .orange : .indigo)
             Slider(value: Binding(get: { Double(arousal) }, set: { arousal = Int($0.rounded()) }), in: 1...10, step: 1)
+                .accessibilityLabel("Intensitas saat ini")
             HStack {
                 Button("Stabil") { arousal = max(1, arousal - 1) }.buttonStyle(.bordered)
                 Button("Naik") { arousal = min(10, arousal + 1) }.buttonStyle(.bordered)
             }
-            Button(machine.state == .warning ? "Pause sekarang" : "Pause") {
-                machine.pause(); seconds = 0; playWarningHaptic()
-            }.buttonStyle(.borderedProminent).tint(machine.state == .warning ? .red : .indigo).controlSize(.large)
-            Button("Hampir terlambat") { machine.earlyCompletion() }.foregroundStyle(.orange)
+            Button("Pause sekarang") { beginRecovery(strong: false) }
+                .buttonStyle(.borderedProminent).tint(.indigo).controlSize(.large)
+            Button("Hampir terlambat") { beginRecovery(strong: true) }
+                .buttonStyle(.bordered).tint(.orange)
+            Button("Sesi berakhir lebih cepat") { machine.earlyCompletion() }
+                .foregroundStyle(.secondary).frame(minHeight: 44)
+        }
+    }
+
+    private var recoveryContent: some View {
+        VStack(spacing: 18) {
+            BreathingOrbView()
+            Text(recoveryElapsed >= recoveryMinimum ? "Nilai ulang intensitasmu" : "Pemulihan · \(recoveryMinimum - recoveryElapsed) dtk")
+                .font(.headline.monospacedDigit())
+            valueControl(title: "Intensitas sekarang", value: $arousal)
+            Button("Lanjut setelah intensitas 4 atau lebih rendah") {
+                machine.recovered(level: arousal, elapsedSeconds: recoveryElapsed)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(recoveryElapsed < recoveryMinimum || arousal > 4)
+            Button("Akhiri dengan aman") { machine.complete() }.buttonStyle(.bordered)
+        }
+    }
+
+    private var resumeContent: some View {
+        VStack(spacing: 18) {
+            Image(systemName: "checkmark.circle.fill").font(.system(size: 54)).foregroundStyle(.green)
+            Text("Siklus \(machine.cycles) selesai").font(.headline)
+            Button("Lanjut perlahan") { beginActive() }.buttonStyle(.borderedProminent).controlSize(.large)
+            Button("Cukup untuk hari ini") { machine.complete() }.buttonStyle(.bordered)
         }
     }
 
     @ViewBuilder private var terminalContent: some View {
-        Image(systemName: machine.state == .safetyAbort ? "cross.case.fill" : "checkmark.circle.fill")
-            .font(.system(size: 56)).foregroundStyle(machine.state == .safetyAbort ? .red : .green)
-        Text(machine.state == .safetyAbort ? "Hentikan latihan dulu" : "Sesi selesai").font(.title2.bold())
-        Text(machine.state == .safetyAbort ? "Keluhan fisik perlu dinilai tenaga kesehatan sebelum latihan dilanjutkan." : "Ini data yang berguna, bukan penilaian atas dirimu.")
+        let safety = machine.state == .safetyAbort
+        Image(systemName: safety ? "cross.case.fill" : "checkmark.circle.fill")
+            .font(.system(size: 56)).foregroundStyle(safety ? .red : .green)
+        Text(safety ? "Hentikan latihan dulu" : "Sesi selesai").font(.title2.bold())
+        Text(safety ? "Keluhan fisik perlu dinilai tenaga kesehatan sebelum latihan dilanjutkan." : terminalMessage)
             .foregroundStyle(.secondary).multilineTextAlignment(.center)
+        if safety {
+            Button("Tutup") { dismiss() }.buttonStyle(.borderedProminent)
+        } else {
+            Button("Lanjut ke refleksi") { showPostCheck = true }.buttonStyle(.borderedProminent)
+        }
     }
 
-    private var stateTitle: String { switch machine.state { case .precheck: "Periksa dulu"; case .prepare: "Tenangkan tubuh"; case .activeLow, .activeRising: "Tetap sadar"; case .warning: "Pause sekarang"; case .pausedRecovery: "Biarkan intensitas turun"; case .resumeReady: "Kembali dalam rentang aman"; default: "" } }
-    private var stateMessage: String { switch machine.state { case .warning: "Hands off. Tarik napas dan biarkan tubuh melunak."; case .prepare: "Rilekskan rahang, perut, paha, dan bokong. Jangan mengejar durasi."; case .pausedRecovery: "Kamu dapat lanjut hanya setelah jeda minimum dan intensitas turun."; default: "TEMPO mendukung latihan terstruktur, bukan diagnosis medis." } }
-    private func tick() { guard ![.precheck, .completed, .earlyCompletion, .cancelled, .safetyAbort, .timeLimitReached].contains(machine.state) else { return }; seconds += 1; if seconds >= 1_200 { machine.reachTimeLimit() } }
-    private func playWarningHaptic() { guard hapticsEnabled else { return }; UIImpactFeedbackGenerator(style: .heavy).impactOccurred() }
+    private var postCheckContent: some View {
+        VStack(spacing: 18) {
+            Image(systemName: "heart.text.square.fill").font(.system(size: 48)).foregroundStyle(.indigo)
+            Text("Refleksi singkat").font(.title.bold())
+            Text("Catat kondisi tubuh, bukan nilai keberhasilan.").foregroundStyle(.secondary).multilineTextAlignment(.center)
+            valueControl(title: "Kecemasan setelah sesi", value: $postAnxiety)
+            valueControl(title: "Ketegangan tubuh", value: $postTension)
+            Toggle("Ada nyeri atau iritasi setelah sesi", isOn: $irritationAfter)
+            Picker("Perasaan setelah sesi", selection: $outcome) {
+                ForEach(["Lebih tenang", "Sama saja", "Lelah", "Tidak nyaman"], id: \.self) { Text($0).tag($0) }
+            }
+            .pickerStyle(.menu)
+            Button("Simpan dan selesai") { savePostCheckAndDismiss() }
+                .buttonStyle(.borderedProminent).controlSize(.large)
+        }
+    }
+
+    private func valueControl(title: String, value: Binding<Int>) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack { Text(title).font(.headline); Spacer(); Text("\(value.wrappedValue)/10").monospacedDigit().foregroundStyle(.secondary) }
+            Slider(value: Binding(get: { Double(value.wrappedValue) }, set: { value.wrappedValue = Int($0.rounded()) }), in: 1...10, step: 1)
+        }
+        .padding().background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var elapsedLabel: some View {
+        Text("Waktu sesi \(totalElapsed / 60):\(String(format: "%02d", totalElapsed % 60))")
+            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+    }
+
+    private var isTerminal: Bool { [.completed, .earlyCompletion, .cancelled, .safetyAbort, .timeLimitReached].contains(machine.state) }
+    private var stateTitle: String { switch machine.state { case .precheck: "Periksa dulu"; case .prepare: "Tenangkan tubuh"; case .activeLow, .activeRising: "Tetap sadar"; case .warning: "Berhenti sekarang"; case .pausedRecovery: "Biarkan intensitas turun"; case .resumeReady: "Kembali dalam rentang aman"; default: "" } }
+    private var stateMessage: String { switch machine.state { case .prepare: "Persiapan pelan membantu tubuh tidak mengejar durasi."; case .pausedRecovery: "Hands off. Tarik napas dan nilai ulang setelah jeda minimum."; default: "TEMPO mendukung latihan terstruktur, bukan diagnosis medis." } }
+    private var terminalMessage: String { switch machine.state { case .earlyCompletion: "Berakhir lebih cepat bukan kegagalan dan tidak perlu langsung diulang."; case .timeLimitReached: "Batas waktu tercapai. Beri tubuh waktu untuk pulih."; default: "Ini data yang berguna, bukan penilaian atas dirimu." } }
+
+    private func beginActive() {
+        machine.beginActive()
+        arousal = min(arousal, 4)
+        strongWarningPlayed = false
+        gentleWarningPlayed = false
+        recoveryStartedAt = nil
+        recoveryElapsed = 0
+    }
+
+    private func beginRecovery(strong: Bool) {
+        if strong { machine.emergencyPause() } else { machine.pause() }
+        recoveryStartedAt = .now
+        recoveryElapsed = 0
+        if strong { playStrongWarningOnce() }
+        else if hapticsEnabled { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
+    }
+
+    private func handleArousalChange(_ level: Int) {
+        guard [.activeLow, .activeRising, .warning].contains(machine.state) else { return }
+        machine.rising(level: level, threshold: 7)
+        if level >= 7 {
+            playStrongWarningOnce()
+            machine.pause()
+            recoveryStartedAt = .now
+            recoveryElapsed = 0
+        } else if level == 6, !gentleWarningPlayed {
+            gentleWarningPlayed = true
+            if hapticsEnabled { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+        }
+    }
+
+    private func handleStateChange(_ state: GuidedSessionState) {
+        if state == .safetyAbort || state == .cancelled { saveImmediatelyIfNeeded(state) }
+    }
+
+    private func updateTimes(now: Date) {
+        if let start = sessionStartedAt { totalElapsed = max(0, Int(now.timeIntervalSince(start))) }
+        if let start = prepareStartedAt { prepareElapsed = max(0, Int(now.timeIntervalSince(start))) }
+        if let start = recoveryStartedAt { recoveryElapsed = max(0, Int(now.timeIntervalSince(start))) }
+        if totalElapsed >= maximumSessionDuration && !isTerminal { machine.reachTimeLimit() }
+    }
+
+    private func playStrongWarningOnce() {
+        guard !strongWarningPlayed else { return }
+        strongWarningPlayed = true
+        if hapticsEnabled { UINotificationFeedbackGenerator().notificationOccurred(.warning) }
+    }
+
+    private func saveImmediatelyIfNeeded(_ state: GuidedSessionState) {
+        guard !resultSaved else { return }
+        history.addSession(cycles: machine.cycles, terminalState: state, durationSeconds: totalElapsed)
+        resultSaved = true
+    }
+
+    private func savePostCheckAndDismiss() {
+        guard !resultSaved else { dismiss(); return }
+        history.addSession(cycles: machine.cycles, terminalState: machine.state, durationSeconds: totalElapsed, postAnxiety: postAnxiety, postTension: postTension, irritationAfter: irritationAfter, outcome: outcome)
+        resultSaved = true
+        dismiss()
+    }
+
+    private func cancelAndDismiss() {
+        machine.cancel()
+        saveImmediatelyIfNeeded(.cancelled)
+        dismiss()
+    }
 }
 
 struct BreathingView: View {

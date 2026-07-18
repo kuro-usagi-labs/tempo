@@ -41,7 +41,7 @@ public struct RuleEngine: Sendable {
             return Recommendation(.healthCheck, .medical, "safety.urinary", "A health check is the better next step. Pause guided training.", blocked: true)
         }
         if c.irritation { return Recommendation(.recovery, .caution, "safety.irritation", "Give your body time to recover. Guided training is paused for 48–72 hours.", blocked: true) }
-        if (c.hoursSinceLastSession ?? .infinity) < 12 || c.guidedSessionsLast7Days >= 3 {
+        if (c.hoursSinceLastSession ?? .infinity) <= 24 || c.guidedSessionsLast7Days >= 3 {
             return Recommendation(.recovery, .caution, "readiness.recent_session", "Rest is part of the program. Another session now is unlikely to help.")
         }
         if c.anxiety >= 8 { return Recommendation(.regulate, .caution, "readiness.high_anxiety", "Settle first with five minutes of breathing, then reassess.") }
@@ -59,15 +59,19 @@ public struct GuidedSessionMachine: Equatable, Sendable {
     public private(set) var state: GuidedSessionState = .precheck
     public private(set) var cycles = 0
     public let maximumCycles: Int
+    public var isTerminal: Bool { [.completed, .earlyCompletion, .cancelled, .safetyAbort, .timeLimitReached].contains(state) }
     public init(maximumCycles: Int = 3) { self.maximumCycles = min(max(1, maximumCycles), 5) }
     public mutating func start() { guard state == .precheck else { return }; state = .prepare }
     public mutating func beginActive() { guard state == .prepare || state == .resumeReady else { return }; state = .activeLow }
-    public mutating func rising(level: Int, threshold: Int) { guard state == .activeLow || state == .activeRising else { return }; state = level >= threshold ? .warning : .activeRising }
+    public mutating func rising(level: Int, threshold: Int) { guard state == .activeLow || state == .activeRising else { return }; state = level >= threshold ? .warning : level >= 6 ? .activeRising : .activeLow }
     public mutating func pause() { guard [.activeLow, .activeRising, .warning].contains(state) else { return }; state = .pausedRecovery }
-    public mutating func recovered(level: Int) { guard state == .pausedRecovery, level <= 4 else { return }; cycles += 1; state = cycles >= maximumCycles ? .completed : .resumeReady }
+    public mutating func emergencyPause() { guard [.activeLow, .activeRising, .warning].contains(state) else { return }; state = .pausedRecovery }
+    public mutating func recovered(level: Int, elapsedSeconds: Int, minimumSeconds: Int = 30) { guard state == .pausedRecovery, elapsedSeconds >= minimumSeconds, level <= 4 else { return }; cycles += 1; state = cycles >= maximumCycles ? .completed : .resumeReady }
+    public mutating func complete() { guard ![.completed, .earlyCompletion, .cancelled, .safetyAbort, .timeLimitReached].contains(state) else { return }; state = .completed }
+    public mutating func cancel() { guard ![.completed, .earlyCompletion, .cancelled, .safetyAbort, .timeLimitReached].contains(state) else { return }; state = .cancelled }
     public mutating func earlyCompletion() { guard ![.completed, .cancelled, .safetyAbort, .timeLimitReached].contains(state) else { return }; state = .earlyCompletion }
     public mutating func reachTimeLimit() { guard ![.completed, .cancelled, .safetyAbort, .earlyCompletion].contains(state) else { return }; state = .timeLimitReached }
-    public mutating func abortForSafety() { state = .safetyAbort }
+    public mutating func abortForSafety() { guard !isTerminal else { return }; state = .safetyAbort }
 }
 
 public enum ActivityKind: String, Codable { case guided, breathing, cardio, strength, recovery, education, review }
@@ -87,11 +91,12 @@ public struct ScoreInputs: Sendable {
     public let tensionRecognitionRate: Double
     public let escalationPredictionRate: Double
     public let successfulCycleRatio: Double
+    public let controlledCompletionRatio: Double
     public let thresholdCompliance: Double
     public let recoveryCompletionRatio: Double
     public let calmRate: Double
     public let adherenceRate: Double
-    public init(earlyPauseRate: Double, loggingCompleteness: Double, tensionRecognitionRate: Double, escalationPredictionRate: Double, successfulCycleRatio: Double, thresholdCompliance: Double, recoveryCompletionRatio: Double, calmRate: Double, adherenceRate: Double) { self.earlyPauseRate = earlyPauseRate; self.loggingCompleteness = loggingCompleteness; self.tensionRecognitionRate = tensionRecognitionRate; self.escalationPredictionRate = escalationPredictionRate; self.successfulCycleRatio = successfulCycleRatio; self.thresholdCompliance = thresholdCompliance; self.recoveryCompletionRatio = recoveryCompletionRatio; self.calmRate = calmRate; self.adherenceRate = adherenceRate }
+    public init(earlyPauseRate: Double, loggingCompleteness: Double, tensionRecognitionRate: Double, escalationPredictionRate: Double, successfulCycleRatio: Double, controlledCompletionRatio: Double, thresholdCompliance: Double, recoveryCompletionRatio: Double, calmRate: Double, adherenceRate: Double) { self.earlyPauseRate = earlyPauseRate; self.loggingCompleteness = loggingCompleteness; self.tensionRecognitionRate = tensionRecognitionRate; self.escalationPredictionRate = escalationPredictionRate; self.successfulCycleRatio = successfulCycleRatio; self.controlledCompletionRatio = controlledCompletionRatio; self.thresholdCompliance = thresholdCompliance; self.recoveryCompletionRatio = recoveryCompletionRatio; self.calmRate = calmRate; self.adherenceRate = adherenceRate }
 }
 
 public struct ScoreSnapshot: Equatable, Sendable { public let awareness: Int; public let control: Int; public let recovery: Int; public let calm: Int; public let consistency: Int }
@@ -100,7 +105,7 @@ public struct ScoreCalculator: Sendable {
     public func calculate(_ input: ScoreInputs) -> ScoreSnapshot {
         func score(_ value: Double) -> Int { Int((max(0, min(1, value)) * 100).rounded()) }
         let awareness = input.earlyPauseRate * 0.50 + input.loggingCompleteness * 0.20 + input.tensionRecognitionRate * 0.15 + input.escalationPredictionRate * 0.15
-        let control = input.successfulCycleRatio * 0.45 + input.thresholdCompliance * 0.20 + input.recoveryCompletionRatio * 0.35
+        let control = input.successfulCycleRatio * 0.45 + input.controlledCompletionRatio * 0.20 + input.thresholdCompliance * 0.20 + input.recoveryCompletionRatio * 0.15
         return ScoreSnapshot(awareness: score(awareness), control: score(control), recovery: score(input.recoveryCompletionRatio), calm: score(input.calmRate), consistency: score(input.adherenceRate))
     }
 }
