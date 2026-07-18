@@ -264,6 +264,7 @@ struct SettingsView: View {
                     Toggle("Pengingat rencana harian", isOn: $remindersEnabled)
                         .onChange(of: remindersEnabled) { _, enabled in if enabled { Task { await LocalNotifications.requestAndScheduleDailyPlan() } } }
                     NavigationLink("Tentang keselamatan") { Text("TEMPO bukan alat diagnosis atau layanan darurat. Nyeri, perdarahan, demam, perih saat kencing, atau cairan tidak biasa memerlukan penilaian profesional.").padding() }
+                    NavigationLink("Tentang rule engine") { RuleEngineInfoView() }
                 }
             }.navigationTitle("Pengaturan")
         }
@@ -277,5 +278,16 @@ struct SettingsView: View {
                 history.deleteAll()
             }
         } message: { Text("Tindakan ini menghapus preferensi dan data lokal yang tersimpan. Ini tidak dapat dibatalkan.") }
+    }
+}
+
+struct RuleEngineInfoView: View {
+    var body: some View {
+        ScrollView { VStack(alignment: .leading, spacing: 16) {
+            Text("Rule engine lokal").font(.largeTitle.bold())
+            Text("TEMPO tidak menggunakan AI, akun, atau koneksi internet untuk menentukan rekomendasi.")
+            Card { VStack(alignment: .leading, spacing: 8) { Text("Urutan keputusan").font(.headline); Text("1. Tanda keselamatan\n2. Pemulihan dan batas frekuensi\n3. Regulasi kecemasan\n4. Check-in dorongan\n5. Latihan, gerak, atau edukasi") } }
+            Text("Dengan jawaban dan riwayat yang sama, TEMPO akan memberikan hasil yang sama. Setiap rekomendasi menyertakan alasan yang sederhana.").foregroundStyle(.secondary)
+        }.padding() }.navigationTitle("Rule engine").navigationBarTitleDisplayMode(.inline)
     }
 }
