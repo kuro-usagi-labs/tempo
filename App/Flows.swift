@@ -256,7 +256,8 @@ struct SettingsView: View {
     @Environment(LocalHistory.self) private var history
     @AppStorage("discreetTerminology") private var discreet = false
     @AppStorage("hapticsEnabled") private var haptics = true
-    @AppStorage("privacyLockEnabled") private var privacyLockEnabled = false
+    @AppStorage("privacyCoverEnabled") private var privacyCoverEnabled = false
+    @AppStorage("biometricLockEnabled") private var biometricLockEnabled = false
     @State private var showDeletionConfirmation = false
     @AppStorage("dailyPlanRemindersEnabled") private var remindersEnabled = false
     var body: some View {
@@ -264,7 +265,8 @@ struct SettingsView: View {
             Form {
                 Section("Privasi") {
                     Toggle("Terminologi privat", isOn: $discreet)
-                    Toggle("Tutup konten saat aplikasi di latar belakang", isOn: $privacyLockEnabled)
+                    Toggle("Tutup konten saat aplikasi di latar belakang", isOn: $privacyCoverEnabled)
+                    Toggle("Minta Face ID / kode saat membuka aplikasi", isOn: $biometricLockEnabled)
                     Button("Hapus semua data", role: .destructive) { showDeletionConfirmation = true }
                 }
                 Section("Preferensi") {
@@ -280,7 +282,8 @@ struct SettingsView: View {
             Button("Hapus semua data", role: .destructive) {
                 UserDefaults.standard.removeObject(forKey: "discreetTerminology")
                 UserDefaults.standard.removeObject(forKey: "hapticsEnabled")
-                UserDefaults.standard.removeObject(forKey: "privacyLockEnabled")
+                UserDefaults.standard.removeObject(forKey: "privacyCoverEnabled")
+                UserDefaults.standard.removeObject(forKey: "biometricLockEnabled")
                 UserDefaults.standard.removeObject(forKey: "dailyPlanRemindersEnabled")
                 LocalNotifications.removeAll()
                 history.deleteAll()

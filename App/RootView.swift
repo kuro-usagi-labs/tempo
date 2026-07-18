@@ -2,13 +2,14 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
-    @AppStorage("privacyLockEnabled") private var privacyLockEnabled = false
+    @AppStorage("privacyCoverEnabled") private var privacyCoverEnabled = false
+    @AppStorage("biometricLockEnabled") private var biometricLockEnabled = false
     @State private var privacyCovered = false
     @State private var isUnlocked = false
     @AppStorage("onboardingCompleted") private var onboardingCompleted = false
     var body: some View {
         ZStack {
-        if onboardingCompleted && (!privacyLockEnabled || isUnlocked) {
+        if onboardingCompleted && (!biometricLockEnabled || isUnlocked) {
         TabView {
             TodayView().tabItem { Label("Hari ini", systemImage: "sparkles") }
             TrainingView().tabItem { Label("Latihan", systemImage: "figure.mind.and.body") }
@@ -28,7 +29,10 @@ struct RootView: View {
         }
         }
         .onChange(of: scenePhase) { _, phase in
-            if privacyLockEnabled && phase != .active { privacyCovered = true; isUnlocked = false }
+            if phase != .active {
+                privacyCovered = privacyCoverEnabled
+                if biometricLockEnabled { isUnlocked = false }
+            }
             if phase == .active { privacyCovered = false }
         }
     }
