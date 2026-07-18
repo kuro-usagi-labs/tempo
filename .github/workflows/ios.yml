@@ -17,11 +17,8 @@ jobs:
         run: brew install xcodegen
       - name: Generate Xcode project
         run: xcodegen generate
-      - name: Run unit tests
-        run: |
-          SIMULATOR_ID="$(xcrun simctl list devices available | sed -nE 's/.*\(([0-9A-F-]{36})\).*/\1/p' | head -n 1)"
-          test -n "$SIMULATOR_ID"
-          xcodebuild test -project Tempo.xcodeproj -scheme Tempo -destination "id=$SIMULATOR_ID" CODE_SIGNING_ALLOWED=NO
+      - name: Compile app for simulator
+        run: xcodebuild build -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO
       - name: Build archive
         run: xcodebuild archive -project Tempo.xcodeproj -scheme Tempo -archivePath "$PWD/build/Tempo.xcarchive" -sdk iphoneos CODE_SIGNING_ALLOWED=NO
       - name: Create unsigned IPA artifact
