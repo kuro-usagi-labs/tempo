@@ -40,11 +40,39 @@ struct TrainingView: View {
                     }
                 }
                 Section("Gerak") {
-                    Label("Jalan santai · 20 menit", systemImage: "figure.walk")
-                    Label("Kekuatan pemula", systemImage: "figure.strengthtraining.traditional")
+                    NavigationLink { ExerciseDetailView(kind: .walk) } label: {
+                        Label("Jalan santai · 20 menit", systemImage: "figure.walk")
+                    }
+                    NavigationLink { ExerciseDetailView(kind: .strength) } label: {
+                        Label("Kekuatan pemula", systemImage: "figure.strengthtraining.traditional")
+                    }
                 }
             }.navigationTitle("Latihan")
         }
+    }
+}
+
+struct ExerciseDetailView: View {
+    enum Kind { case walk, strength }
+    let kind: Kind
+    @State private var completed = false
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Image(systemName: kind == .walk ? "figure.walk" : "figure.strengthtraining.traditional").font(.system(size: 54)).foregroundStyle(.cyan)
+                Text(kind == .walk ? "Jalan santai" : "Kekuatan pemula").font(.largeTitle.bold())
+                Text(kind == .walk ? "Berjalan dengan tempo nyaman selama 15–20 menit. Kamu masih harus bisa berbicara tanpa terengah-engah." : "Lakukan dengan tempo nyaman. Berhenti jika muncul nyeri tajam, pusing, nyeri dada, atau sesak yang tidak biasa.").foregroundStyle(.secondary)
+                if kind == .strength {
+                    Card { VStack(alignment: .leading, spacing: 10) {
+                        Text("Rangkaian").font(.headline)
+                        Text("• Wall atau incline push-up: 2 × 6–10\n• Chair squat: 2 × 8–12\n• Glute bridge: 2 × 8–12\n• Bird dog: 2 × 6 per sisi\n• Calf raise: 2 × 10–15")
+                    } }
+                }
+                Button(completed ? "Aktivitas selesai" : "Tandai selesai") { completed = true }
+                    .buttonStyle(.borderedProminent).controlSize(.large).disabled(completed)
+                Text("Gerak mendukung kesehatan umum, suasana hati, tidur, dan pengelolaan stres. Ini bukan pengobatan untuk kondisi seksual.").font(.footnote).foregroundStyle(.secondary)
+            }.padding()
+        }.navigationTitle("Aktivitas").navigationBarTitleDisplayMode(.inline)
     }
 }
 
