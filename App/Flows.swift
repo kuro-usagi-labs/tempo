@@ -22,7 +22,61 @@ struct RecommendationView: View { let result: Recommendation; let dismiss: Dismi
     private var title: String { switch result.action { case .healthCheck: "Hentikan latihan dulu"; case .recovery: "Waktunya pemulihan"; case .regulate, .urgeSurf: "Mari tenangkan ritme"; case .guidedSession: "Kamu siap berlatih"; case .privateSession: "Tetap pelan dan aman"; default: "Langkah kecil untuk hari ini" } }
 }
 
-struct TrainingView: View { var body: some View { NavigationStack { List { Section("Sesi") { Label("Guided control session", systemImage: "timer"); Label("Urge surfing · 5 menit", systemImage: "wind"); Label("Napas pemulihan", systemImage: "circle.dotted") }; Section("Gerak") { Label("Jalan santai · 20 menit", systemImage: "figure.walk"); Label("Kekuatan pemula", systemImage: "figure.strengthtraining.traditional") } }.navigationTitle("Latihan") } }
-struct ProgressView: View { var body: some View { NavigationStack { ContentUnavailableView("Belum ada progres", systemImage: "chart.line.uptrend.xyaxis", description: Text("Selesaikan check-in atau aktivitas pertamamu untuk melihat tren privat.")) .navigationTitle("Progres") } }
-struct LearnView: View { var body: some View { NavigationStack { List { Section("Dasar tubuh") { Text("Gairah adalah kurva, bukan sakelar"); Text("Pre-ejakulat bukan kegagalan") }; Section("Keterampilan") { Text("Kapan perlu melambat"); Text("Napas pemulihan") }; Section("Kesehatan") { Text("Tanda yang perlu diperiksa") } }.navigationTitle("Belajar") } }
-struct SettingsView: View { @State private var discreet = false; @State private var haptics = true; var body: some View { NavigationStack { Form { Section("Privasi") { Toggle("Terminologi privat", isOn: $discreet); NavigationLink("Kunci aplikasi") { Text("Face ID dan PIN akan tersedia saat autentikasi perangkat dikonfigurasi.").padding() }; Button("Hapus semua data", role: .destructive) {} }; Section("Preferensi") { Toggle("Haptics", isOn: $haptics); NavigationLink("Tentang keselamatan") { Text("TEMPO bukan alat diagnosis atau layanan darurat. Nyeri, perdarahan, demam, perih saat kencing, atau cairan tidak biasa memerlukan penilaian profesional.").padding() } } }.navigationTitle("Pengaturan") } }
+struct TrainingView: View {
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Sesi") {
+                    Label("Guided control session", systemImage: "timer")
+                    Label("Urge surfing · 5 menit", systemImage: "wind")
+                    Label("Napas pemulihan", systemImage: "circle.dotted")
+                }
+                Section("Gerak") {
+                    Label("Jalan santai · 20 menit", systemImage: "figure.walk")
+                    Label("Kekuatan pemula", systemImage: "figure.strengthtraining.traditional")
+                }
+            }.navigationTitle("Latihan")
+        }
+    }
+}
+
+struct ProgressView: View {
+    var body: some View {
+        NavigationStack {
+            ContentUnavailableView("Belum ada progres", systemImage: "chart.line.uptrend.xyaxis", description: Text("Selesaikan check-in atau aktivitas pertamamu untuk melihat tren privat."))
+                .navigationTitle("Progres")
+        }
+    }
+}
+
+struct LearnView: View {
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Dasar tubuh") { Text("Gairah adalah kurva, bukan sakelar"); Text("Pre-ejakulat bukan kegagalan") }
+                Section("Keterampilan") { Text("Kapan perlu melambat"); Text("Napas pemulihan") }
+                Section("Kesehatan") { Text("Tanda yang perlu diperiksa") }
+            }.navigationTitle("Belajar")
+        }
+    }
+}
+
+struct SettingsView: View {
+    @State private var discreet = false
+    @State private var haptics = true
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Privasi") {
+                    Toggle("Terminologi privat", isOn: $discreet)
+                    NavigationLink("Kunci aplikasi") { Text("Face ID dan PIN akan tersedia saat autentikasi perangkat dikonfigurasi.").padding() }
+                    Button("Hapus semua data", role: .destructive) {}
+                }
+                Section("Preferensi") {
+                    Toggle("Haptics", isOn: $haptics)
+                    NavigationLink("Tentang keselamatan") { Text("TEMPO bukan alat diagnosis atau layanan darurat. Nyeri, perdarahan, demam, perih saat kencing, atau cairan tidak biasa memerlukan penilaian profesional.").padding() }
+                }
+            }.navigationTitle("Pengaturan")
+        }
+    }
+}
