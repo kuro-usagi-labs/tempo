@@ -3,6 +3,7 @@ import UIKit
 
 struct UrgeCheckInView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(LocalHistory.self) private var history
     @State private var step = 0; @State private var intensity = 5; @State private var trigger: UrgeTrigger = .desire; @State private var intent: UrgeIntent = .calm; @State private var hasSafetyFlag = false
     @State private var result: Recommendation?
     var body: some View { NavigationStack { VStack(spacing: 28) {
@@ -13,7 +14,7 @@ struct UrgeCheckInView: View {
     private var triggerQuestion: some View { ChoiceQuestion(title: "Apa konteksnya sekarang?", selection: $trigger, labels: [.init(.desire, "Gairah seksual"), .init(.boredom, "Bosan"), .init(.stress, "Stres"), .init(.loneliness, "Kesepian"), .init(.sleep, "Sulit tidur")]) }
     private var intentQuestion: some View { ChoiceQuestion(title: "Apa yang kamu butuhkan?", selection: $intent, labels: [.init(.calm, "Menenangkan diri"), .init(.training, "Latihan kontrol"), .init(.privateSession, "Sesi pribadi")]) }
     private var safetyQuestion: some View { VStack(spacing: 20) { Text("Ada nyeri, cedera, perih saat kencing, atau cairan tidak biasa?").font(.title2.bold()).multilineTextAlignment(.center); Toggle("Ya, ada keluhan", isOn: $hasSafetyFlag).padding().background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 16)); Text("Keluhan apa pun akan menghentikan latihan dan mengarahkanmu ke health check.").foregroundStyle(.secondary).multilineTextAlignment(.center) }.padding() }
-    private func advance() { if step < 3 { step += 1 } else { var c = DecisionContext(); c.urgeIntensity = intensity; c.trigger = trigger; c.intent = intent; c.pain = hasSafetyFlag; result = RuleEngine().evaluate(c) } }
+    private func advance() { if step < 3 { step += 1 } else { var c = DecisionContext(); c.urgeIntensity = intensity; c.trigger = trigger; c.intent = intent; c.pain = hasSafetyFlag; let recommendation = RuleEngine().evaluate(c); history.add(intensity: intensity, trigger: trigger, intent: intent, recommendation: recommendation); result = recommendation } }
 }
 
 struct ChoiceOption<T: Hashable>: Identifiable { let value: T; let title: String; var id: T { value }; init(_ value: T, _ title: String) { self.value = value; self.title = title } }
