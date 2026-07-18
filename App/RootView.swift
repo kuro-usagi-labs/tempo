@@ -4,10 +4,11 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("privacyLockEnabled") private var privacyLockEnabled = false
     @State private var privacyCovered = false
+    @State private var isUnlocked = false
     @AppStorage("onboardingCompleted") private var onboardingCompleted = false
     var body: some View {
         ZStack {
-        if onboardingCompleted {
+        if onboardingCompleted && (!privacyLockEnabled || isUnlocked) {
         TabView {
             TodayView().tabItem { Label("Hari ini", systemImage: "sparkles") }
             TrainingView().tabItem { Label("Latihan", systemImage: "figure.mind.and.body") }
@@ -16,7 +17,7 @@ struct RootView: View {
             SettingsView().tabItem { Label("Pengaturan", systemImage: "gearshape") }
         }.tint(Color(red: 0.47, green: 0.42, blue: 1))
         } else {
-            OnboardingView()
+            if onboardingCompleted { VStack(spacing: 18) { Image(systemName: "lock.fill").font(.system(size: 48)); Text("TEMPO terkunci").font(.title.bold()); Button("Buka") { Task { isUnlocked = await PrivacyLock.authenticate() } }.buttonStyle(.borderedProminent) }.frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.black) } else { OnboardingView() }
         }
         if privacyCovered {
             Color.black.ignoresSafeArea()
@@ -27,7 +28,7 @@ struct RootView: View {
         }
         }
         .onChange(of: scenePhase) { _, phase in
-            if privacyLockEnabled && phase != .active { privacyCovered = true }
+            if privacyLockEnabled && phase != .active { privacyCovered = true; isUnlocked = false }
             if phase == .active { privacyCovered = false }
         }
     }
