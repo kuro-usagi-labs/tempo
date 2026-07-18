@@ -179,15 +179,17 @@ struct LearnView: View {
 }
 
 struct SettingsView: View {
-    @State private var discreet = false
-    @State private var haptics = true
+    @AppStorage("discreetTerminology") private var discreet = false
+    @AppStorage("hapticsEnabled") private var haptics = true
+    @AppStorage("privacyLockEnabled") private var privacyLockEnabled = false
+    @State private var showDeletionConfirmation = false
     var body: some View {
         NavigationStack {
             Form {
                 Section("Privasi") {
                     Toggle("Terminologi privat", isOn: $discreet)
-                    NavigationLink("Kunci aplikasi") { Text("Face ID dan PIN akan tersedia saat autentikasi perangkat dikonfigurasi.").padding() }
-                    Button("Hapus semua data", role: .destructive) {}
+                    Toggle("Tutup konten saat aplikasi di latar belakang", isOn: $privacyLockEnabled)
+                    Button("Hapus semua data", role: .destructive) { showDeletionConfirmation = true }
                 }
                 Section("Preferensi") {
                     Toggle("Haptics", isOn: $haptics)
@@ -195,5 +197,12 @@ struct SettingsView: View {
                 }
             }.navigationTitle("Pengaturan")
         }
+        .confirmationDialog("Hapus seluruh data lokal?", isPresented: $showDeletionConfirmation, titleVisibility: .visible) {
+            Button("Hapus semua data", role: .destructive) {
+                UserDefaults.standard.removeObject(forKey: "discreetTerminology")
+                UserDefaults.standard.removeObject(forKey: "hapticsEnabled")
+                UserDefaults.standard.removeObject(forKey: "privacyLockEnabled")
+            }
+        } message: { Text("Tindakan ini menghapus preferensi dan data lokal yang tersimpan. Ini tidak dapat dibatalkan.") }
     }
 }

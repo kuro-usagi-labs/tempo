@@ -1,7 +1,11 @@
 import SwiftUI
 
 struct RootView: View {
+    @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("privacyLockEnabled") private var privacyLockEnabled = false
+    @State private var privacyCovered = false
     var body: some View {
+        ZStack {
         TabView {
             TodayView().tabItem { Label("Hari ini", systemImage: "sparkles") }
             TrainingView().tabItem { Label("Latihan", systemImage: "figure.mind.and.body") }
@@ -9,6 +13,18 @@ struct RootView: View {
             LearnView().tabItem { Label("Belajar", systemImage: "book") }
             SettingsView().tabItem { Label("Pengaturan", systemImage: "gearshape") }
         }.tint(Color(red: 0.47, green: 0.42, blue: 1))
+        if privacyCovered {
+            Color.black.ignoresSafeArea()
+            VStack(spacing: 12) {
+                Image(systemName: "circle.fill").font(.system(size: 36)).foregroundStyle(.indigo)
+                Text("TEMPO").font(.headline)
+            }.accessibilityLabel("Layar privat")
+        }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if privacyLockEnabled && phase != .active { privacyCovered = true }
+            if phase == .active { privacyCovered = false }
+        }
     }
 }
 
