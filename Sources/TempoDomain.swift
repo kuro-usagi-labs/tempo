@@ -79,3 +79,27 @@ public struct WeeklyScheduler: Sendable {
         return [.init(day: 0, kind: .breathing), .init(day: 1, kind: .guided), .init(day: 2, kind: .recovery), .init(day: 3, kind: .cardio), .init(day: 4, kind: .guided), .init(day: 5, kind: .strength), .init(day: 6, kind: .review)]
     }
 }
+
+public struct ScoreInputs: Sendable {
+    public let earlyPauseRate: Double
+    public let loggingCompleteness: Double
+    public let tensionRecognitionRate: Double
+    public let escalationPredictionRate: Double
+    public let successfulCycleRatio: Double
+    public let thresholdCompliance: Double
+    public let recoveryCompletionRatio: Double
+    public let calmRate: Double
+    public let adherenceRate: Double
+    public init(earlyPauseRate: Double, loggingCompleteness: Double, tensionRecognitionRate: Double, escalationPredictionRate: Double, successfulCycleRatio: Double, thresholdCompliance: Double, recoveryCompletionRatio: Double, calmRate: Double, adherenceRate: Double) { self.earlyPauseRate = earlyPauseRate; self.loggingCompleteness = loggingCompleteness; self.tensionRecognitionRate = tensionRecognitionRate; self.escalationPredictionRate = escalationPredictionRate; self.successfulCycleRatio = successfulCycleRatio; self.thresholdCompliance = thresholdCompliance; self.recoveryCompletionRatio = recoveryCompletionRatio; self.calmRate = calmRate; self.adherenceRate = adherenceRate }
+}
+
+public struct ScoreSnapshot: Equatable, Sendable { public let awareness: Int; public let control: Int; public let recovery: Int; public let calm: Int; public let consistency: Int }
+public struct ScoreCalculator: Sendable {
+    public init() {}
+    public func calculate(_ input: ScoreInputs) -> ScoreSnapshot {
+        func score(_ value: Double) -> Int { Int((max(0, min(1, value)) * 100).rounded()) }
+        let awareness = input.earlyPauseRate * 0.50 + input.loggingCompleteness * 0.20 + input.tensionRecognitionRate * 0.15 + input.escalationPredictionRate * 0.15
+        let control = input.successfulCycleRatio * 0.45 + input.thresholdCompliance * 0.20 + input.recoveryCompletionRatio * 0.35
+        return ScoreSnapshot(awareness: score(awareness), control: score(control), recovery: score(input.recoveryCompletionRatio), calm: score(input.calmRate), consistency: score(input.adherenceRate))
+    }
+}
