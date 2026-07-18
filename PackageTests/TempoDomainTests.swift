@@ -32,6 +32,14 @@ final class TempoDomainTests: XCTestCase {
         XCTAssertEqual(session.state, .resumeReady)
     }
 
+    func testSessionTimeLimitIsTerminal() {
+        var session = GuidedSessionMachine()
+        session.start(); session.beginActive(); session.reachTimeLimit()
+        XCTAssertEqual(session.state, .timeLimitReached)
+        session.earlyCompletion()
+        XCTAssertEqual(session.state, .timeLimitReached)
+    }
+
     func testScoresStayWithinExpectedRange() {
         let inputs = ScoreInputs(earlyPauseRate: 1, loggingCompleteness: 1, tensionRecognitionRate: 1, escalationPredictionRate: 1, successfulCycleRatio: 1, thresholdCompliance: 1, recoveryCompletionRatio: 1, calmRate: 1, adherenceRate: 1)
         let scores = ScoreCalculator().calculate(inputs)

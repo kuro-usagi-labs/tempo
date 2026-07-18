@@ -162,7 +162,7 @@ struct GuidedSessionView: View {
 
     private var stateTitle: String { switch machine.state { case .precheck: "Periksa dulu"; case .prepare: "Tenangkan tubuh"; case .activeLow, .activeRising: "Tetap sadar"; case .warning: "Pause sekarang"; case .pausedRecovery: "Biarkan intensitas turun"; case .resumeReady: "Kembali dalam rentang aman"; default: "" } }
     private var stateMessage: String { switch machine.state { case .warning: "Hands off. Tarik napas dan biarkan tubuh melunak."; case .prepare: "Rilekskan rahang, perut, paha, dan bokong. Jangan mengejar durasi."; case .pausedRecovery: "Kamu dapat lanjut hanya setelah jeda minimum dan intensitas turun."; default: "TEMPO mendukung latihan terstruktur, bukan diagnosis medis." } }
-    private func tick() { guard ![.precheck, .completed, .earlyCompletion, .cancelled, .safetyAbort, .timeLimitReached].contains(machine.state) else { return }; seconds += 1; if seconds >= 1_200 { machine.earlyCompletion() } }
+    private func tick() { guard ![.precheck, .completed, .earlyCompletion, .cancelled, .safetyAbort, .timeLimitReached].contains(machine.state) else { return }; seconds += 1; if seconds >= 1_200 { machine.reachTimeLimit() } }
     private func playWarningHaptic() { guard hapticsEnabled else { return }; UIImpactFeedbackGenerator(style: .heavy).impactOccurred() }
 }
 

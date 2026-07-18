@@ -66,6 +66,7 @@ public struct GuidedSessionMachine: Equatable, Sendable {
     public mutating func pause() { guard [.activeLow, .activeRising, .warning].contains(state) else { return }; state = .pausedRecovery }
     public mutating func recovered(level: Int) { guard state == .pausedRecovery, level <= 4 else { return }; cycles += 1; state = cycles >= maximumCycles ? .completed : .resumeReady }
     public mutating func earlyCompletion() { guard ![.completed, .cancelled, .safetyAbort, .timeLimitReached].contains(state) else { return }; state = .earlyCompletion }
+    public mutating func reachTimeLimit() { guard ![.completed, .cancelled, .safetyAbort, .earlyCompletion].contains(state) else { return }; state = .timeLimitReached }
     public mutating func abortForSafety() { state = .safetyAbort }
 }
 
