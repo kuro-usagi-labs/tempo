@@ -78,11 +78,13 @@ struct ExerciseDetailView: View {
 
 struct GuidedSessionView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(LocalHistory.self) private var history
     @State private var machine = GuidedSessionMachine()
     @State private var arousal = 3
     @State private var seconds = 0
     @State private var safetyConcern = false
     @State private var isPrepared = false
+    @State private var resultSaved = false
     @AppStorage("hapticsEnabled") private var hapticsEnabled = true
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -126,6 +128,11 @@ struct GuidedSessionView: View {
             guard [.activeLow, .activeRising, .warning].contains(machine.state) else { return }
             machine.rising(level: newValue, threshold: 7)
             if newValue >= 7 { playWarningHaptic() }
+        }
+        .onChange(of: machine.state) { _, newState in
+            guard !resultSaved, [.completed, .earlyCompletion, .safetyAbort, .timeLimitReached].contains(newState) else { return }
+            history.addSession(cycles: machine.cycles, terminalState: newState)
+            resultSaved = true
         }
     }
 
@@ -201,6 +208,7 @@ struct ProgressView: View {
                         HStack { Text("Total check-in"); Spacer(); Text("\(history.checkIns.count)").monospacedDigit() }
                         HStack { Text("Rata-rata intensitas"); Spacer(); Text(String(format: "%.1f", averageIntensity)).monospacedDigit() }
                         HStack { Text("Safety hold"); Spacer(); Text("\(history.checkIns.filter(\.blocksTraining).count)").monospacedDigit() }
+                        HStack { Text("Guided session"); Spacer(); Text("\(history.sessions.count)").monospacedDigit() }
                     }
                     Section("Aktivitas terbaru") {
                         ForEach(history.checkIns.prefix(10)) { entry in
