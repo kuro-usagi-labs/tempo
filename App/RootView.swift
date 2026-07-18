@@ -115,7 +115,7 @@ struct TodayView: View {
     @State private var showPrimaryActivity = false
     private var baselineCompleted: Bool { history.baseline != nil }
     private var weeklyPlan: [PlannedActivity] {
-        let plan = WeeklyScheduler().plan(for: history.effectiveProgramPhase, highStress: history.isHighStress, irritation: history.activeSafetyHold != nil)
+        let plan = WeeklyScheduler().plan(for: history.effectiveProgramPhase, highStress: history.isHighStress, irritation: history.hasSafetyBlock)
         guard history.baseline?.hasExerciseRestriction == true else { return plan }
         return plan.map { activity in
             if activity.kind == .cardio || activity.kind == .strength { return PlannedActivity(day: activity.day, kind: .recovery) }
@@ -142,7 +142,7 @@ struct TodayView: View {
                         header
                         if !baselineCompleted { baselinePrompt }
                         if history.baseline?.onset == "Perubahan baru", history.activeSafetyHold == nil { acquiredChangeCard }
-                        if history.activeSafetyHold != nil { safetyHoldCard } else { todayHero }
+                        if history.hasSafetyBlock { safetyHoldCard } else { todayHero }
                         quickActions
                         progressSnapshot
                         weeklyPlanCard

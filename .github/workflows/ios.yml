@@ -54,7 +54,7 @@ jobs:
           cp -R "$app_path" build/Payload/
           (cd build && /usr/bin/zip -qry Tempo-resign-ready.ipa Payload)
           /usr/bin/unzip -t build/Tempo-resign-ready.ipa
-          test "$(/usr/bin/unzip -Z1 build/Tempo-resign-ready.ipa | awk '/^Payload\/[^/]+\.app\/$/{count++} END{print count+0}')" -eq 1
+          test "$(/usr/bin/unzip -Z1 build/Tempo-resign-ready.ipa | /usr/bin/grep -Ec '^Payload/[^/]+\.app/$')" -eq 1
           /usr/bin/file "$app_path/Tempo" | /usr/bin/grep -q arm64
           test "$(/usr/bin/stat -f '%Lp' "$app_path/Tempo")" = "755"
           test -f "$app_path/Assets.car"

@@ -69,9 +69,6 @@ public struct RuleEngine: Sendable {
     public static let rulesetVersion = "1.0.0"
     public init() {}
     public func evaluate(_ c: DecisionContext) -> Recommendation {
-        if c.programPhase == .safetyHold {
-            return Recommendation(.healthCheck, .medical, "safety.active_hold", "Selesaikan pemeriksaan ulang gejala sebelum guided session.", blocked: true)
-        }
         if c.bloodReported || c.fever || c.pain || c.pelvicOrTesticularPain {
             return Recommendation(.healthCheck, .urgent, "safety.urgent", "Hentikan latihan. Jawabanmu memerlukan panduan kesehatan segera.", blocked: true)
         }
@@ -79,6 +76,9 @@ public struct RuleEngine: Sendable {
             return Recommendation(.healthCheck, .medical, "safety.urinary", "Health check adalah langkah berikutnya. Guided session dijeda.", blocked: true)
         }
         if c.irritation { return Recommendation(.recovery, .caution, "safety.irritation", "Beri tubuh waktu pulih. Guided session dijeda sekurangnya 48 jam.", blocked: true) }
+        if c.programPhase == .safetyHold {
+            return Recommendation(.healthCheck, .medical, "safety.active_hold", "Selesaikan pemeriksaan ulang gejala sebelum guided session.", blocked: true)
+        }
         if c.programPhase == .assessmentRequired, c.intent == .training {
             return Recommendation(.education, .caution, "readiness.baseline_required", "Lengkapi baseline sebelum memulai guided session.", blocked: true)
         }
@@ -138,13 +138,18 @@ public struct GuidedSessionMachine: Equatable, Sendable {
         state = .pausedRecovery
         return true
     }
-    public mutating func recovered(level: Int, elapsedSeconds: Int, minimumSeconds: Int = 30) { guard state == .pausedRecovery, elapsedSeconds >= minimumSeconds, level <= 4 else { return }; cycles += 1; state = cycles >= maximumCycles ? .completed : .resumeReady }
+    public mutating func recovered(level: Int, elapsedSeconds: Int, minimumSeconds: Int = 30) {
+        guard state == .pausedRecovery, elapsedSeconds >= minimumSeconds, level <= 4 else { return }
+        if lastPauseReason == .interruption { state = .resumeReady; return }
+        cycles += 1
+        state = cycles >= maximumCycles ? .completed : .resumeReady
+    }
     public mutating func updateElapsed(totalSeconds: Int) {
         guard !isTerminal, state != .precheck else { return }
         elapsedSeconds = max(elapsedSeconds, max(0, totalSeconds))
         if elapsedSeconds >= maximumDurationSeconds { state = .timeLimitReached }
     }
-    public mutating func complete() { guard !isTerminal, state != .precheck else { return }; state = .completed }
+    public mutating func complete() { guard !isTerminal, [.activeLow, .activeRising, .warning, .pausedRecovery, .resumeReady].contains(state) else { return }; state = .completed }
     public mutating func cancel() { guard !isTerminal else { return }; state = .cancelled }
     public mutating func earlyCompletion() { guard !isTerminal, [.activeLow, .activeRising, .warning, .pausedRecovery, .resumeReady].contains(state) else { return }; state = .earlyCompletion }
     public mutating func reachTimeLimit() { guard !isTerminal, state != .precheck else { return }; elapsedSeconds = maximumDurationSeconds; state = .timeLimitReached }

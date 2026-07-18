@@ -81,7 +81,12 @@ struct TrainingView: View {
         NavigationStack {
             List {
                 Section("Sesi") {
-                    if let hold = history.activeSafetyHold {
+                    if history.hasPendingSafetyWrite {
+                        NavigationLink { HealthCheckView() } label: {
+                            Label("Guided session dikunci · pulihkan safety hold", systemImage: "exclamationmark.shield.fill").foregroundStyle(.red)
+                        }
+                        Text("Penyimpanan safety hold sebelumnya belum berhasil. Gate tetap tertutup sampai pemeriksaan ulang tersimpan.").font(.caption).foregroundStyle(.secondary)
+                    } else if let hold = history.activeSafetyHold {
                         NavigationLink { HealthCheckView() } label: {
                             Label("Guided session dijeda · periksa gejala", systemImage: "cross.case.fill").foregroundStyle(.red)
                         }
@@ -199,6 +204,7 @@ struct GuidedSessionView: View {
     @State private var showPostCheck = false
     @State private var postAnxiety = 3
     @State private var postTension = 3
+    @State private var painAfter = false
     @State private var irritationAfter = false
     @State private var outcome = "Lebih tenang"
     @State private var note = ""
@@ -251,11 +257,11 @@ struct GuidedSessionView: View {
         .onChange(of: machine.state) { _, newState in handleStateChange(newState) }
         .onChange(of: scenePhase) { _, phase in handleScenePhase(phase) }
         .confirmationDialog("Bagaimana ingin mengakhiri sesi?", isPresented: $showEndOptions, titleVisibility: .visible) {
-            Button("Selesaikan dan isi refleksi") { machine.complete() }
+            if machine.state != .prepare { Button("Selesaikan dan isi refleksi") { machine.complete() } }
             Button("Batalkan sesi", role: .destructive) { cancelAndDismiss() }
             Button("Lanjutkan sesi", role: .cancel) {}
         }
-        .alert("Sesi belum tersimpan", isPresented: $saveFailed) { Button("Coba lagi") {} } message: { Text("Data belum dapat disimpan dengan aman. Jangan mulai sesi baru sebelum penyimpanan berhasil.") }
+        .alert("Sesi belum tersimpan", isPresented: $saveFailed) { Button("Coba lagi") { retrySave() } } message: { Text("Data belum dapat disimpan dengan aman. Jangan mulai sesi baru sebelum penyimpanan berhasil.") }
     }
 
     private var precheckContent: some View {
@@ -350,6 +356,7 @@ struct GuidedSessionView: View {
             .foregroundStyle(.secondary).multilineTextAlignment(.center)
         if safety {
             Button("Tutup") { dismiss() }.buttonStyle(.borderedProminent)
+                .disabled(history.activeSafetyHold == nil)
         } else {
             Button("Lanjut ke refleksi") { showPostCheck = true }.buttonStyle(.borderedProminent)
         }
@@ -362,7 +369,9 @@ struct GuidedSessionView: View {
             Text("Catat kondisi tubuh, bukan nilai keberhasilan.").foregroundStyle(.secondary).multilineTextAlignment(.center)
             valueControl(title: "Kecemasan setelah sesi", value: $postAnxiety)
             valueControl(title: "Ketegangan tubuh", value: $postTension)
-            Toggle("Ada nyeri atau iritasi setelah sesi", isOn: $irritationAfter)
+            Toggle("Ada nyeri berat atau nyeri baru setelah sesi", isOn: $painAfter)
+                .tint(.red)
+            Toggle("Ada iritasi ringan setelah sesi", isOn: $irritationAfter)
             Picker("Perasaan setelah sesi", selection: $outcome) {
                 ForEach(["Lebih tenang", "Sama saja", "Lelah", "Tidak nyaman"], id: \.self) { Text($0).tag($0) }
             }
@@ -487,7 +496,7 @@ struct GuidedSessionView: View {
 
     private func savePostCheckAndDismiss() {
         guard !resultSaved else { dismiss(); return }
-        let saved = history.addSession(startedAt: sessionStartedAt, cycles: machine.cycles, terminalState: machine.state, targetCycles: machine.maximumCycles, pauseThreshold: history.adaptivePauseThreshold, maximumDurationSeconds: machine.maximumDurationSeconds, preAnxiety: anxiety, durationSeconds: totalElapsed, lateStopOccurred: machine.lateStopOccurred, postAnxiety: postAnxiety, postTension: postTension, irritationAfter: irritationAfter, outcome: outcome, note: note.isEmpty ? nil : note, arousalEvents: arousalEvents, pauseCycles: pauseCycles)
+        let saved = history.addSession(startedAt: sessionStartedAt, cycles: machine.cycles, terminalState: machine.state, targetCycles: machine.maximumCycles, pauseThreshold: history.adaptivePauseThreshold, maximumDurationSeconds: machine.maximumDurationSeconds, preAnxiety: anxiety, durationSeconds: totalElapsed, lateStopOccurred: machine.lateStopOccurred, postAnxiety: postAnxiety, postTension: postTension, painAfter: painAfter, irritationAfter: irritationAfter, outcome: outcome, note: note.isEmpty ? nil : note, arousalEvents: arousalEvents, pauseCycles: pauseCycles)
         if saved { resultSaved = true; dismiss() } else { saveFailed = true }
     }
 
@@ -505,6 +514,11 @@ struct GuidedSessionView: View {
         }
     }
 
+    private func retrySave() {
+        if showPostCheck { savePostCheckAndDismiss() }
+        else if machine.state == .safetyAbort || machine.state == .cancelled { saveImmediatelyIfNeeded(machine.state) }
+    }
+
     private func beginPauseRecord(eventType: String, late: Bool) {
         pauseStartedOffset = totalElapsed
         pauseStartedLevel = arousal
@@ -515,13 +529,15 @@ struct GuidedSessionView: View {
     private func recoverAndContinue() {
         let cyclesBefore = machine.cycles
         machine.recovered(level: arousal, elapsedSeconds: recoveryElapsed)
-        guard machine.cycles > cyclesBefore else { return }
-        let start = pauseStartedOffset ?? max(0, totalElapsed - recoveryElapsed)
-        pauseCycles.append(LocalPauseCycle(index: machine.cycles, startOffset: start, endOffset: totalElapsed, arousalBefore: pauseStartedLevel ?? arousal, arousalAfter: arousal, lateStop: pauseWasLate, successful: true))
+        guard machine.state != .pausedRecovery else { return }
+        if machine.cycles > cyclesBefore {
+            let start = pauseStartedOffset ?? max(0, totalElapsed - recoveryElapsed)
+            pauseCycles.append(LocalPauseCycle(index: machine.cycles, startOffset: start, endOffset: totalElapsed, arousalBefore: pauseStartedLevel ?? arousal, arousalAfter: arousal, lateStop: pauseWasLate, successful: true))
+        }
         pauseStartedOffset = nil
         pauseStartedLevel = nil
         pauseWasLate = false
-        arousalEvents.append(LocalArousalEvent(timestampOffset: totalElapsed, level: arousal, eventType: "recovered"))
+        arousalEvents.append(LocalArousalEvent(timestampOffset: totalElapsed, level: arousal, eventType: machine.cycles > cyclesBefore ? "recovered" : "interruption-resumed"))
     }
 }
 
@@ -706,6 +722,7 @@ struct SettingsView: View {
     @AppStorage("biometricLockEnabled") private var biometricLockEnabled = false
     @AppStorage("notificationSoundsEnabled") private var notificationSoundsEnabled = false
     @State private var showDeletionConfirmation = false
+    @State private var showNoteDeletionConfirmation = false
     @State private var showExportPrompt = false
     @State private var showExporter = false
     @State private var exportPassword = ""
@@ -725,6 +742,7 @@ struct SettingsView: View {
                         .font(.subheadline).foregroundStyle(.secondary)
                     Toggle("Minta Face ID / kode saat membuka aplikasi", isOn: biometricBinding)
                     Button("Export data terenkripsi") { exportPassword = ""; showExportPrompt = true }
+                    Button("Hapus semua catatan teks") { showNoteDeletionConfirmation = true }
                     Button("Hapus semua data", role: .destructive) { showDeletionConfirmation = true }
                 }
                 Section("Preferensi") {
@@ -761,6 +779,9 @@ struct SettingsView: View {
                 onboardingCompleted = false
             }
         } message: { Text("Tindakan ini menghapus preferensi dan data lokal yang tersimpan. Ini tidak dapat dibatalkan.") }
+        .confirmationDialog("Hapus semua catatan teks privat?", isPresented: $showNoteDeletionConfirmation, titleVisibility: .visible) {
+            Button("Hapus catatan teks", role: .destructive) { if !history.deleteAllNotes() { deletionError = true } }
+        } message: { Text("Skor dan ringkasan sesi tetap disimpan; hanya isi catatan opsional yang dihapus.") }
         .alert("Lindungi file export", isPresented: $showExportPrompt) {
             SecureField("Password minimal 8 karakter", text: $exportPassword)
             Button("Buat file") { createExport() }

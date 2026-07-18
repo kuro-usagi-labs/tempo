@@ -41,6 +41,7 @@ struct LocalSession: Codable, Identifiable {
     let lateStopOccurred: Bool?
     let postAnxiety: Int?
     let postTension: Int?
+    let painAfter: Bool?
     let irritationAfter: Bool?
     let outcome: String?
     let note: String?
@@ -109,14 +110,17 @@ final class LocalHistory {
     private(set) var sessions: [LocalSession] = []
     private(set) var exercises: [LocalExerciseLog] = []
     private var profile = LocalProfileState()
+    private(set) var hasPendingSafetyWrite = false
     private let storageKey = "tempo.local.checkins.v1"
     private let sessionStorageKey = "tempo.local.sessions.v1"
     private let profileStorageKey = "tempo.local.profile.v1"
     private let exerciseStorageKey = "tempo.local.exercises.v1"
+    private let pendingSafetyStorageKey = "tempo.pending-safety-lock.v1"
 
     var baseline: LocalBaseline? { profile.baseline }
     var safetyHoldCount: Int { profile.safetyHolds.count }
     var activeSafetyHold: LocalSafetyHold? { profile.safetyHolds.last { $0.resolvedAt == nil } }
+    var hasSafetyBlock: Bool { activeSafetyHold != nil || hasPendingSafetyWrite }
     var guidedEligibility: GuidedEligibility {
         GuidedEligibilityEvaluator().evaluate(
             programPhase: effectiveProgramPhase,
@@ -125,7 +129,7 @@ final class LocalHistory {
         )
     }
     var effectiveProgramPhase: ProgramPhase {
-        if activeSafetyHold != nil { return .safetyHold }
+        if hasSafetyBlock { return .safetyHold }
         if baseline == nil { return .assessmentRequired }
         let valid = trainingSessions
         if programWeek <= 2 || valid.count < 3 { return .awareness }
@@ -214,7 +218,10 @@ final class LocalHistory {
         try? JSONEncoder().encode(LocalExportSnapshot(exportedAt: .now, rulesetVersion: RuleEngine.rulesetVersion, profile: profile, checkIns: checkIns, sessions: sessions, exercises: exercises))
     }
 
-    init() { load() }
+    init() {
+        hasPendingSafetyWrite = UserDefaults.standard.bool(forKey: pendingSafetyStorageKey)
+        load()
+    }
 
     @discardableResult
     func add(intensity: Int, trigger: UrgeTrigger, intent: UrgeIntent, recommendation: Recommendation) -> Bool {
@@ -230,13 +237,17 @@ final class LocalHistory {
     }
 
     @discardableResult
-    func addSession(startedAt: Date? = nil, cycles: Int, terminalState: GuidedSessionState, targetCycles: Int? = nil, pauseThreshold: Int? = nil, maximumDurationSeconds: Int? = nil, preAnxiety: Int? = nil, durationSeconds: Int? = nil, lateStopOccurred: Bool? = nil, postAnxiety: Int? = nil, postTension: Int? = nil, irritationAfter: Bool? = nil, outcome: String? = nil, note: String? = nil, arousalEvents: [LocalArousalEvent]? = nil, pauseCycles: [LocalPauseCycle]? = nil) -> Bool {
-        if irritationAfter == true {
+    func addSession(startedAt: Date? = nil, cycles: Int, terminalState: GuidedSessionState, targetCycles: Int? = nil, pauseThreshold: Int? = nil, maximumDurationSeconds: Int? = nil, preAnxiety: Int? = nil, durationSeconds: Int? = nil, lateStopOccurred: Bool? = nil, postAnxiety: Int? = nil, postTension: Int? = nil, painAfter: Bool? = nil, irritationAfter: Bool? = nil, outcome: String? = nil, note: String? = nil, arousalEvents: [LocalArousalEvent]? = nil, pauseCycles: [LocalPauseCycle]? = nil) -> Bool {
+        if painAfter == true {
+            guard recordSafetyHold(reasonCode: "safety.post-session-pain", severity: RecommendationSeverity.urgent.rawValue, source: "guided-session") else { return false }
+        } else if irritationAfter == true {
             guard recordSafetyHold(reasonCode: "safety.post-session-irritation", severity: RecommendationSeverity.caution.rawValue, source: "guided-session") else { return false }
         }
         var updated = sessions
-        updated.insert(LocalSession(id: UUID(), startedAt: startedAt, completedAt: .now, cycles: cycles, terminalState: terminalState.rawValue, targetCycles: targetCycles, pauseThreshold: pauseThreshold, maximumDurationSeconds: maximumDurationSeconds, preAnxiety: preAnxiety, durationSeconds: durationSeconds, lateStopOccurred: lateStopOccurred, postAnxiety: postAnxiety, postTension: postTension, irritationAfter: irritationAfter, outcome: outcome, note: note, arousalEvents: arousalEvents, pauseCycles: pauseCycles), at: 0)
-        updated = Array(updated.prefix(100))
+        updated.insert(LocalSession(id: UUID(), startedAt: startedAt, completedAt: .now, cycles: cycles, terminalState: terminalState.rawValue, targetCycles: targetCycles, pauseThreshold: pauseThreshold, maximumDurationSeconds: maximumDurationSeconds, preAnxiety: preAnxiety, durationSeconds: durationSeconds, lateStopOccurred: lateStopOccurred, postAnxiety: postAnxiety, postTension: postTension, painAfter: painAfter, irritationAfter: irritationAfter, outcome: outcome, note: note, arousalEvents: arousalEvents, pauseCycles: pauseCycles), at: 0)
+        let rawEventCutoff = Date.now.addingTimeInterval(-90 * 86_400)
+        updated = updated.map { $0.completedAt < rawEventCutoff ? sessionDroppingRawEvents($0) : $0 }
+        updated = Array(updated.prefix(520))
         guard save(updated, for: sessionStorageKey) else { return false }
         sessions = updated
         return true
@@ -262,8 +273,12 @@ final class LocalHistory {
             let notBefore = severity == RecommendationSeverity.caution.rawValue || reason.contains("irritation") ? Date.now.addingTimeInterval(48 * 3_600) : nil
             updated.safetyHolds.append(LocalSafetyHold(id: UUID(), createdAt: .now, reasonCode: reason, severity: severity, source: "baseline", recheckNotBefore: notBefore, resolvedAt: nil))
         }
-        guard persistProfile(updated) else { return false }
+        guard persistProfile(updated) else {
+            if baseline.hasSafetySymptoms { markPendingSafetyWrite() }
+            return false
+        }
         profile = updated
+        if baseline.hasSafetySymptoms { clearPendingSafetyWrite() }
         return true
     }
 
@@ -276,19 +291,24 @@ final class LocalHistory {
            let index = updated.safetyHolds.firstIndex(where: { $0.id == active.id }) {
             if isIrritation {
                 updated.safetyHolds[index] = LocalSafetyHold(id: active.id, createdAt: active.createdAt, reasonCode: active.reasonCode, severity: severity, source: source, recheckNotBefore: notBefore, resolvedAt: nil)
-                guard persistProfile(updated) else { return false }
+                guard persistProfile(updated) else { markPendingSafetyWrite(); return false }
                 profile = updated
+                clearPendingSafetyWrite()
             }
             return true
         }
         updated.safetyHolds.append(LocalSafetyHold(id: UUID(), createdAt: .now, reasonCode: reasonCode, severity: severity, source: source, recheckNotBefore: notBefore, resolvedAt: nil))
-        guard persistProfile(updated) else { return false }
+        guard persistProfile(updated) else { markPendingSafetyWrite(); return false }
         profile = updated
+        clearPendingSafetyWrite()
         return true
     }
 
     @discardableResult
     func resolveActiveSafetyHoldAfterClearRecheck() -> Bool {
+        if hasPendingSafetyWrite {
+            return recordSafetyHold(reasonCode: "safety.pending-write-recovery", severity: RecommendationSeverity.medical.rawValue, source: "recovery")
+        }
         guard canResolveActiveSafetyHold else { return false }
         var updated = profile
         let now = Date.now
@@ -303,13 +323,25 @@ final class LocalHistory {
 
     @discardableResult
     func deleteAll() -> Bool {
-        guard SecureLocalStore.removeAll() else { return false }
+        guard ProtectedFileStore.removeAll(), SecureLocalStore.removeAll() else { return false }
         UserDefaults.standard.removeObject(forKey: storageKey)
         UserDefaults.standard.removeObject(forKey: sessionStorageKey)
         checkIns = []
         sessions = []
         profile = LocalProfileState()
         exercises = []
+        hasPendingSafetyWrite = false
+        UserDefaults.standard.removeObject(forKey: pendingSafetyStorageKey)
+        return true
+    }
+
+    @discardableResult
+    func deleteAllNotes() -> Bool {
+        let updated = sessions.map { value in
+            LocalSession(id: value.id, startedAt: value.startedAt, completedAt: value.completedAt, cycles: value.cycles, terminalState: value.terminalState, targetCycles: value.targetCycles, pauseThreshold: value.pauseThreshold, maximumDurationSeconds: value.maximumDurationSeconds, preAnxiety: value.preAnxiety, durationSeconds: value.durationSeconds, lateStopOccurred: value.lateStopOccurred, postAnxiety: value.postAnxiety, postTension: value.postTension, painAfter: value.painAfter, irritationAfter: value.irritationAfter, outcome: value.outcome, note: nil, arousalEvents: value.arousalEvents, pauseCycles: value.pauseCycles)
+        }
+        guard save(updated, for: sessionStorageKey) else { return false }
+        sessions = updated
         return true
     }
 
@@ -324,9 +356,22 @@ final class LocalHistory {
     }
 
     private func load<T: Codable>(_ type: T.Type, for key: String, defaultValue: T) -> T {
-        if let data = SecureLocalStore.data(for: key), let decoded = try? JSONDecoder().decode(T.self, from: data) { return decoded }
+        if key != profileStorageKey, let data = ProtectedFileStore.data(for: key) {
+            if let decoded = try? JSONDecoder().decode(T.self, from: data) { return decoded }
+            if key == sessionStorageKey { markPendingSafetyWrite() }
+            return defaultValue
+        }
+        if let data = SecureLocalStore.data(for: key) {
+            guard let decoded = try? JSONDecoder().decode(T.self, from: data) else {
+                if key == sessionStorageKey { markPendingSafetyWrite() }
+                return defaultValue
+            }
+            if key != profileStorageKey, ProtectedFileStore.store(data, for: key) { SecureLocalStore.remove(key) }
+            return decoded
+        }
         if let legacyData = UserDefaults.standard.data(forKey: key), let decoded = try? JSONDecoder().decode(T.self, from: legacyData) {
-            if SecureLocalStore.store(legacyData, for: key) { UserDefaults.standard.removeObject(forKey: key) }
+            let stored = key == profileStorageKey ? SecureLocalStore.store(legacyData, for: key) : ProtectedFileStore.store(legacyData, for: key)
+            if stored { UserDefaults.standard.removeObject(forKey: key) }
             return decoded
         }
         return defaultValue
@@ -335,11 +380,25 @@ final class LocalHistory {
     @discardableResult
     private func save<T: Encodable>(_ value: T, for key: String) -> Bool {
         guard let data = try? JSONEncoder().encode(value) else { return false }
-        return SecureLocalStore.store(data, for: key)
+        return ProtectedFileStore.store(data, for: key)
     }
 
     private func persistProfile(_ value: LocalProfileState) -> Bool {
         guard let data = try? JSONEncoder().encode(value) else { return false }
         return SecureLocalStore.store(data, for: profileStorageKey)
+    }
+
+    private func sessionDroppingRawEvents(_ value: LocalSession) -> LocalSession {
+        LocalSession(id: value.id, startedAt: value.startedAt, completedAt: value.completedAt, cycles: value.cycles, terminalState: value.terminalState, targetCycles: value.targetCycles, pauseThreshold: value.pauseThreshold, maximumDurationSeconds: value.maximumDurationSeconds, preAnxiety: value.preAnxiety, durationSeconds: value.durationSeconds, lateStopOccurred: value.lateStopOccurred, postAnxiety: value.postAnxiety, postTension: value.postTension, painAfter: value.painAfter, irritationAfter: value.irritationAfter, outcome: value.outcome, note: value.note, arousalEvents: nil, pauseCycles: nil)
+    }
+
+    private func markPendingSafetyWrite() {
+        hasPendingSafetyWrite = true
+        UserDefaults.standard.set(true, forKey: pendingSafetyStorageKey)
+    }
+
+    private func clearPendingSafetyWrite() {
+        hasPendingSafetyWrite = false
+        UserDefaults.standard.removeObject(forKey: pendingSafetyStorageKey)
     }
 }

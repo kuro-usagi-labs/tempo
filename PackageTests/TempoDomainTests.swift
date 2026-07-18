@@ -173,6 +173,20 @@ final class TempoDomainTests: XCTestCase {
         XCTAssertEqual(session.state, .timeLimitReached)
     }
 
+    func testInterruptionRecoveryDoesNotCountAsTrainingCycle() {
+        var session = GuidedSessionMachine()
+        session.start(); session.beginActive(); session.pause(reason: .interruption)
+        session.recovered(level: 3, elapsedSeconds: 30)
+        XCTAssertEqual(session.state, .resumeReady)
+        XCTAssertEqual(session.cycles, 0)
+    }
+
+    func testPreparationCannotBeRecordedAsCompletedSession() {
+        var session = GuidedSessionMachine()
+        session.start(); session.complete()
+        XCTAssertEqual(session.state, .prepare)
+    }
+
     func testAbsoluteSessionCapIsEnforced() {
         let session = GuidedSessionMachine(maximumCycles: 99, maximumDurationSeconds: 9_999)
         XCTAssertEqual(session.maximumCycles, 5)
