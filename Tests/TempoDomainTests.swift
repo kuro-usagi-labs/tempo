@@ -7,6 +7,13 @@ final class TempoDomainTests: XCTestCase {
     func testGuidedSessionNeedsRecoveryBeforeResume() { var s = GuidedSessionMachine(); s.start(); s.beginActive(); XCTAssertTrue(s.rising(level: 7, threshold: 7)); XCTAssertEqual(s.state, .pausedRecovery); s.recovered(level: 5, elapsedSeconds: 30); XCTAssertEqual(s.state, .pausedRecovery); s.recovered(level: 4, elapsedSeconds: 30); XCTAssertEqual(s.state, .resumeReady) }
     func testBeginnerPlanDoesNotPlaceGuidedSessionsConsecutively() { let days = WeeklyScheduler().beginnerPlan().filter { $0.kind == .guided }.map(\.day); XCTAssertEqual(days, [1, 4]) }
 
+    func testPlanConstraintsReplaceUnsafeOrUnavailableActivities() {
+        let resolver = PlanActivityResolver()
+        XCTAssertEqual(resolver.effectiveKind(.cardio, exerciseRestricted: true, guidedAllowed: true, isToday: false), .recovery)
+        XCTAssertEqual(resolver.effectiveKind(.strength, exerciseRestricted: true, guidedAllowed: true, isToday: false), .recovery)
+        XCTAssertEqual(resolver.effectiveKind(.guided, exerciseRestricted: false, guidedAllowed: false, isToday: true), .recovery)
+    }
+
     func testGuidedEligibilityUsesOneCentralGate() {
         let evaluator = GuidedEligibilityEvaluator()
         XCTAssertEqual(evaluator.evaluate(programPhase: .assessmentRequired, hoursSinceLastSession: nil, guidedSessionsLast7Days: 0).reason, .baselineRequired)

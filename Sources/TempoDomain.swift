@@ -158,6 +158,14 @@ public struct GuidedSessionMachine: Equatable, Sendable {
 
 public enum ActivityKind: String, Codable, Sendable { case guided, breathing, cardio, strength, recovery, education, review }
 public struct PlannedActivity: Equatable, Sendable { public let day: Int; public let kind: ActivityKind; public init(day: Int, kind: ActivityKind) { self.day = day; self.kind = kind } }
+public struct PlanActivityResolver: Sendable {
+    public init() {}
+    public func effectiveKind(_ scheduledKind: ActivityKind, exerciseRestricted: Bool, guidedAllowed: Bool, isToday: Bool) -> ActivityKind {
+        if exerciseRestricted && (scheduledKind == .cardio || scheduledKind == .strength) { return .recovery }
+        if isToday && scheduledKind == .guided && !guidedAllowed { return .recovery }
+        return scheduledKind
+    }
+}
 public struct WeeklyScheduler: Sendable {
     public init() {}
     public func beginnerPlan(highStress: Bool = false, irritation: Bool = false) -> [PlannedActivity] {

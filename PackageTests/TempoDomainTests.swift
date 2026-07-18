@@ -59,6 +59,14 @@ final class TempoDomainTests: XCTestCase {
         }
     }
 
+    func testPlanConstraintsReplaceUnsafeOrUnavailableActivities() {
+        let resolver = PlanActivityResolver()
+        XCTAssertEqual(resolver.effectiveKind(.cardio, exerciseRestricted: true, guidedAllowed: true, isToday: false), .recovery)
+        XCTAssertEqual(resolver.effectiveKind(.strength, exerciseRestricted: true, guidedAllowed: true, isToday: false), .recovery)
+        XCTAssertEqual(resolver.effectiveKind(.guided, exerciseRestricted: false, guidedAllowed: false, isToday: true), .recovery)
+        XCTAssertEqual(resolver.effectiveKind(.guided, exerciseRestricted: false, guidedAllowed: false, isToday: false), .guided)
+    }
+
     func testSessionRequiresRecoveryBeforeResume() {
         var session = GuidedSessionMachine()
         session.start(); session.beginActive(); session.rising(level: 7, threshold: 7)

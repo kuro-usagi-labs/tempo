@@ -119,14 +119,26 @@ struct TodayView: View {
     @State private var showPrimaryActivity = false
     private var baselineCompleted: Bool { history.baseline != nil }
     private var weeklyPlan: [PlannedActivity] {
+        let resolver = PlanActivityResolver()
+        let exerciseRestricted = history.baseline?.hasExerciseRestriction == true
         if history.currentWeekPlan.count == 7 {
-            return history.currentWeekPlan.enumerated().map { PlannedActivity(day: $0.offset, kind: $0.element.kind) }
+            return history.currentWeekPlan.enumerated().map { entry in
+                let day = entry.element
+                let kind = resolver.effectiveKind(
+                    day.kind,
+                    exerciseRestricted: exerciseRestricted && day.status == .planned,
+                    guidedAllowed: true,
+                    isToday: false
+                )
+                return PlannedActivity(day: entry.offset, kind: kind)
+            }
         }
         let plan = WeeklyScheduler().plan(for: history.effectiveProgramPhase, highStress: history.isHighStress, irritation: history.hasSafetyBlock)
-        guard history.baseline?.hasExerciseRestriction == true else { return plan }
         return plan.map { activity in
-            if activity.kind == .cardio || activity.kind == .strength { return PlannedActivity(day: activity.day, kind: .recovery) }
-            return activity
+            PlannedActivity(
+                day: activity.day,
+                kind: resolver.effectiveKind(activity.kind, exerciseRestricted: exerciseRestricted, guidedAllowed: true, isToday: false)
+            )
         }
     }
     private var todayIndex: Int { (Calendar.current.component(.weekday, from: .now) + 5) % 7 }
@@ -248,14 +260,18 @@ struct TodayView: View {
     @ViewBuilder private var primaryActivityDestination: some View {
         switch todayActivity {
         case .guided:
-            if history.guidedEligibility.isAllowed { GuidedSessionView() }
+            if history.guidedEligibility.isAllowed { GuidedSessionView(plannedDayID: history.todayPlan?.id) }
             else { GuidedEligibilityBlockedView(eligibility: history.guidedEligibility) }
-        case .breathing: BreathingView(title: "Napas singkat", duration: 240, plannedKind: .breathing)
-        case .recovery: BreathingView(title: "Pemulihan", duration: 300, plannedKind: .recovery)
-        case .cardio: ExerciseDetailView(kind: .walk)
-        case .strength: ExerciseDetailView(kind: .strength)
-        case .education: LessonView(title: "Kesadaran sebelum intensitas", body: "Perhatikan perubahan napas, ketegangan, dan dorongan sebelum semuanya terasa mendesak. Mengenali sinyal awal memberi lebih banyak pilihan untuk melambat atau berhenti.", plannedKind: .education)
-        case .review: LessonView(title: "Tinjauan mingguan", body: "Perhatikan apa yang membantu minggu ini: kapan kamu mengenali kenaikan lebih awal, kapan kamu memilih jeda, dan bagaimana tubuh pulih. Istirahat yang dipatuhi juga merupakan progres.", plannedKind: .review)
+        case .breathing: BreathingView(title: "Napas singkat", duration: 240, plannedKind: .breathing, plannedDayID: history.todayPlan?.id)
+        case .recovery: BreathingView(title: "Pemulihan", duration: 300, plannedKind: .recovery, plannedDayID: history.todayPlan?.id)
+        case .cardio:
+            if history.baseline?.hasExerciseRestriction == true { ExerciseRestrictionBlockedView() }
+            else { ExerciseDetailView(kind: .walk, plannedDayID: history.todayPlan?.id) }
+        case .strength:
+            if history.baseline?.hasExerciseRestriction == true { ExerciseRestrictionBlockedView() }
+            else { ExerciseDetailView(kind: .strength, plannedDayID: history.todayPlan?.id) }
+        case .education: LessonView(title: "Kesadaran sebelum intensitas", body: "Perhatikan perubahan napas, ketegangan, dan dorongan sebelum semuanya terasa mendesak. Mengenali sinyal awal memberi lebih banyak pilihan untuk melambat atau berhenti.", plannedKind: .education, plannedDayID: history.todayPlan?.id)
+        case .review: LessonView(title: "Tinjauan mingguan", body: "Perhatikan apa yang membantu minggu ini: kapan kamu mengenali kenaikan lebih awal, kapan kamu memilih jeda, dan bagaimana tubuh pulih. Istirahat yang dipatuhi juga merupakan progres.", plannedKind: .review, plannedDayID: history.todayPlan?.id)
         }
     }
 

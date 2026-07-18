@@ -404,17 +404,32 @@ final class LocalHistory {
         let end = calendar.date(byAdding: .day, value: 7, to: start) ?? start
         let existing = plannedDays.filter { $0.date >= start && $0.date < end }
         let phase = effectiveProgramPhase
-        let needsRegeneration = force || existing.count != 7 || existing.contains { $0.phase != phase || $0.rulesetVersion != RuleEngine.rulesetVersion }
-        var updatedWeek: [LocalPlanDay]
-        if needsRegeneration {
-            let template = WeeklyScheduler().plan(for: phase, highStress: isHighStress, irritation: hasSafetyBlock)
-            updatedWeek = template.compactMap { activity in
-                guard let date = calendar.date(byAdding: .day, value: activity.day, to: start) else { return nil }
-                if let retained = existing.first(where: { calendar.isDate($0.date, inSameDayAs: date) }), retained.status != .planned || calendar.isDateInToday(date) { return retained }
-                return LocalPlanDay(id: UUID(), date: date, kind: activity.kind, status: .planned, phase: phase, generatedAt: .now, rulesetVersion: RuleEngine.rulesetVersion)
-            }
-        } else {
-            updatedWeek = existing
+        let needsRegeneration = force || existing.count != 7 || existing.contains {
+            $0.status == .planned && ($0.phase != phase || $0.rulesetVersion != RuleEngine.rulesetVersion)
+        }
+        let template = WeeklyScheduler().plan(for: phase, highStress: isHighStress, irritation: hasSafetyBlock)
+        let resolver = PlanActivityResolver()
+        let exerciseRestricted = baseline?.hasExerciseRestriction == true
+        var updatedWeek = template.compactMap { activity -> LocalPlanDay? in
+            guard let date = calendar.date(byAdding: .day, value: activity.day, to: start) else { return nil }
+            let retained = existing.first { calendar.isDate($0.date, inSameDayAs: date) }
+            if let retained, retained.status != .planned { return retained }
+            let kind = resolver.effectiveKind(
+                activity.kind,
+                exerciseRestricted: exerciseRestricted,
+                guidedAllowed: guidedEligibility.isAllowed,
+                isToday: calendar.isDateInToday(date)
+            )
+            if let retained, !needsRegeneration, retained.kind == kind { return retained }
+            return LocalPlanDay(
+                id: retained?.id ?? UUID(),
+                date: date,
+                kind: kind,
+                status: .planned,
+                phase: phase,
+                generatedAt: .now,
+                rulesetVersion: RuleEngine.rulesetVersion
+            )
         }
         let today = calendar.startOfDay(for: .now)
         for index in updatedWeek.indices where updatedWeek[index].date < today && updatedWeek[index].status == .planned {
@@ -433,6 +448,25 @@ final class LocalHistory {
     }
 
     @discardableResult
+    func completeTodayPlan(id: UUID, performedKind: ActivityKind) -> Bool {
+        guard let index = plannedDays.firstIndex(where: { $0.id == id }) else { return false }
+        var updated = plannedDays
+        let current = updated[index]
+        updated[index] = LocalPlanDay(
+            id: current.id,
+            date: current.date,
+            kind: performedKind,
+            status: .completed,
+            phase: current.phase,
+            generatedAt: current.generatedAt,
+            rulesetVersion: current.rulesetVersion
+        )
+        guard save(updated, for: planStorageKey) else { return false }
+        plannedDays = updated
+        return true
+    }
+
+    @discardableResult
     func skipTodayPlan() -> Bool {
         updateTodayPlan(kind: nil, status: .skipped)
     }
@@ -446,9 +480,29 @@ final class LocalHistory {
 
     private func updateTodayPlan(kind: ActivityKind?, status: LocalPlanStatus) -> Bool {
         let calendar = Calendar.current
-        guard let index = plannedDays.firstIndex(where: { calendar.isDateInToday($0.date) && (kind == nil || $0.kind == kind) }) else { return false }
+        let resolver = PlanActivityResolver()
+        guard let index = plannedDays.firstIndex(where: { day in
+            guard calendar.isDateInToday(day.date) else { return false }
+            guard let kind else { return true }
+            let effectiveKind = resolver.effectiveKind(
+                day.kind,
+                exerciseRestricted: baseline?.hasExerciseRestriction == true,
+                guidedAllowed: guidedEligibility.isAllowed,
+                isToday: true
+            )
+            return effectiveKind == kind
+        }) else { return false }
         var updated = plannedDays
-        updated[index].status = status
+        let current = updated[index]
+        updated[index] = LocalPlanDay(
+            id: current.id,
+            date: current.date,
+            kind: kind ?? current.kind,
+            status: status,
+            phase: current.phase,
+            generatedAt: current.generatedAt,
+            rulesetVersion: current.rulesetVersion
+        )
         guard save(updated, for: planStorageKey) else { return false }
         plannedDays = updated
         return true

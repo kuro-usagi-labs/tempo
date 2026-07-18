@@ -119,6 +119,17 @@ struct PrivateSessionGuidanceView: View {
     }
 }
 
+struct ExerciseRestrictionBlockedView: View {
+    var body: some View {
+        ContentUnavailableView {
+            Label("Gerak sedang dijeda", systemImage: "cross.case.fill")
+        } description: {
+            Text("Baseline mencatat pembatasan aktivitas. Minta penilaian tenaga kesehatan sebelum memulai latihan gerak.")
+        }
+        .navigationTitle("Gerak")
+    }
+}
+
 struct TrainingView: View {
     @Environment(LocalHistory.self) private var history
     var body: some View {
@@ -184,10 +195,18 @@ struct ExerciseDetailView: View {
     enum Kind { case walk, strength }
     let kind: Kind
     @Environment(LocalHistory.self) private var history
+    @State private var plannedDayID: UUID?
     @State private var completed = false
+    @State private var activityLogged = false
     @State private var perceivedDifficulty = 3
     @State private var painReported = false
     @State private var saveFailed = false
+
+    init(kind: Kind, plannedDayID: UUID? = nil) {
+        self.kind = kind
+        _plannedDayID = State(initialValue: plannedDayID)
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -203,19 +222,42 @@ struct ExerciseDetailView: View {
                 valueControl
                 Toggle("Ada nyeri tajam, pusing, nyeri dada, atau sesak tidak biasa", isOn: $painReported)
                     .tint(.red)
-                Button(completed ? "Aktivitas selesai" : "Tandai selesai") {
-                    guard !completed else { return }
-                    if painReported, !history.recordSafetyHold(reasonCode: "safety.exercise-symptom", severity: RecommendationSeverity.urgent.rawValue, source: "exercise") { saveFailed = true; return }
-                    if history.addExercise(kind: kind == .walk ? "Jalan santai" : "Kekuatan pemula", durationMinutes: kind == .walk ? 20 : 15, perceivedDifficulty: perceivedDifficulty, painReported: painReported) {
-                        history.completeTodayPlan(kind: kind == .walk ? .cardio : .strength)
-                        completed = true
-                    } else { saveFailed = true }
-                }
+                Button(completed ? "Aktivitas selesai" : "Tandai selesai") { saveActivity() }
                     .buttonStyle(.borderedProminent).controlSize(.large).disabled(completed)
                 Text("Gerak mendukung kesehatan umum, suasana hati, tidur, dan pengelolaan stres. Ini bukan pengobatan untuk kondisi seksual.").font(.footnote).foregroundStyle(.secondary)
             }.padding()
         }.navigationTitle("Aktivitas").navigationBarTitleDisplayMode(.inline)
-            .alert("Aktivitas belum tersimpan", isPresented: $saveFailed) { Button("Coba lagi") {} } message: { Text("TEMPO tidak dapat menyimpan catatan aktivitas dengan aman.") }
+            .onAppear { captureMatchingPlanIfNeeded() }
+            .alert("Aktivitas belum tersimpan", isPresented: $saveFailed) { Button("Coba lagi") { saveActivity() } } message: { Text("TEMPO tidak dapat menyimpan catatan atau status rencana dengan aman.") }
+    }
+
+    private func saveActivity() {
+        guard !completed else { return }
+        let activityKind: ActivityKind = kind == .walk ? .cardio : .strength
+        captureMatchingPlanIfNeeded()
+        if !activityLogged {
+            if painReported, !history.recordSafetyHold(reasonCode: "safety.exercise-symptom", severity: RecommendationSeverity.urgent.rawValue, source: "exercise") { saveFailed = true; return }
+            guard history.addExercise(kind: kind == .walk ? "Jalan santai" : "Kekuatan pemula", durationMinutes: kind == .walk ? 20 : 15, perceivedDifficulty: perceivedDifficulty, painReported: painReported) else { saveFailed = true; return }
+            activityLogged = true
+        }
+        if let plannedDayID, !history.completeTodayPlan(id: plannedDayID, performedKind: activityKind) {
+            saveFailed = true
+            return
+        }
+        saveFailed = false
+        completed = true
+    }
+
+    private func captureMatchingPlanIfNeeded() {
+        guard plannedDayID == nil, let todayPlan = history.todayPlan, todayPlan.status == .planned else { return }
+        let activityKind: ActivityKind = kind == .walk ? .cardio : .strength
+        let effectiveKind = PlanActivityResolver().effectiveKind(
+            todayPlan.kind,
+            exerciseRestricted: history.baseline?.hasExerciseRestriction == true,
+            guidedAllowed: history.guidedEligibility.isAllowed,
+            isToday: true
+        )
+        if effectiveKind == activityKind { plannedDayID = todayPlan.id }
     }
 
     private var valueControl: some View {
@@ -231,6 +273,7 @@ struct GuidedSessionView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @Environment(LocalHistory.self) private var history
+    @State private var plannedDayID: UUID?
     @State private var machine = GuidedSessionMachine()
     @State private var arousal = 3
     @State private var anxiety = 3
@@ -256,6 +299,7 @@ struct GuidedSessionView: View {
     @State private var outcome = "Lebih tenang"
     @State private var note = ""
     @State private var saveFailed = false
+    @State private var planCompletionPending = false
     @State private var arousalEvents: [LocalArousalEvent] = []
     @State private var pauseCycles: [LocalPauseCycle] = []
     @State private var pauseStartedOffset: Int?
@@ -266,6 +310,10 @@ struct GuidedSessionView: View {
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     private let preparationMinimum = 90
     private let recoveryMinimum = 30
+
+    init(plannedDayID: UUID? = nil) {
+        _plannedDayID = State(initialValue: plannedDayID)
+    }
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -308,7 +356,9 @@ struct GuidedSessionView: View {
             Button("Batalkan sesi", role: .destructive) { cancelAndDismiss() }
             Button("Lanjutkan sesi", role: .cancel) {}
         }
-        .alert("Sesi belum tersimpan", isPresented: $saveFailed) { Button("Coba lagi") { retrySave() } } message: { Text("Data belum dapat disimpan dengan aman. Jangan mulai sesi baru sebelum penyimpanan berhasil.") }
+        .alert(planCompletionPending ? "Status rencana belum tersimpan" : "Sesi belum tersimpan", isPresented: $saveFailed) { Button("Coba lagi") { retrySave() } } message: {
+            Text(planCompletionPending ? "Catatan sesi sudah aman, tetapi status rencana perlu dicoba lagi." : "Data belum dapat disimpan dengan aman. Jangan mulai sesi baru sebelum penyimpanan berhasil.")
+        }
     }
 
     private var precheckContent: some View {
@@ -539,15 +589,30 @@ struct GuidedSessionView: View {
         }
         let saved = history.addSession(startedAt: sessionStartedAt, cycles: machine.cycles, terminalState: state, targetCycles: machine.maximumCycles, pauseThreshold: history.adaptivePauseThreshold, maximumDurationSeconds: machine.maximumDurationSeconds, preAnxiety: anxiety, durationSeconds: totalElapsed, lateStopOccurred: machine.lateStopOccurred, arousalEvents: arousalEvents, pauseCycles: pauseCycles)
         if saved {
-            if state == .completed || state == .earlyCompletion || state == .timeLimitReached { history.completeTodayPlan(kind: .guided) }
             resultSaved = true
+            if state == .completed || state == .earlyCompletion || state == .timeLimitReached,
+               !completePlannedGuidedActivity() {
+                planCompletionPending = true
+                saveFailed = true
+            }
         } else { saveFailed = true }
     }
 
     private func savePostCheckAndDismiss() {
         guard !resultSaved else { dismiss(); return }
         let saved = history.addSession(startedAt: sessionStartedAt, cycles: machine.cycles, terminalState: machine.state, targetCycles: machine.maximumCycles, pauseThreshold: history.adaptivePauseThreshold, maximumDurationSeconds: machine.maximumDurationSeconds, preAnxiety: anxiety, durationSeconds: totalElapsed, lateStopOccurred: machine.lateStopOccurred, postAnxiety: postAnxiety, postTension: postTension, painAfter: painAfter, irritationAfter: irritationAfter, outcome: outcome, note: note.isEmpty ? nil : note, arousalEvents: arousalEvents, pauseCycles: pauseCycles)
-        if saved { history.completeTodayPlan(kind: .guided); resultSaved = true; dismiss() } else { saveFailed = true }
+        guard saved else { saveFailed = true; return }
+        resultSaved = true
+        if completePlannedGuidedActivity() { dismiss() }
+        else {
+            planCompletionPending = true
+            saveFailed = true
+        }
+    }
+
+    private func completePlannedGuidedActivity() -> Bool {
+        guard let plannedDayID else { return true }
+        return history.completeTodayPlan(id: plannedDayID, performedKind: .guided)
     }
 
     private func cancelAndDismiss() {
@@ -557,6 +622,12 @@ struct GuidedSessionView: View {
     }
 
     private func configureEligibility() {
+        if plannedDayID == nil,
+           let todayPlan = history.todayPlan,
+           todayPlan.status == .planned,
+           todayPlan.kind == .guided {
+            plannedDayID = todayPlan.id
+        }
         let eligibility = history.guidedEligibility
         guard eligibility.isAllowed else { eligibilityMessage = eligibility.message; return }
         if machine.state == .precheck {
@@ -565,6 +636,14 @@ struct GuidedSessionView: View {
     }
 
     private func retrySave() {
+        if planCompletionPending {
+            if completePlannedGuidedActivity() {
+                planCompletionPending = false
+                saveFailed = false
+                if showPostCheck { dismiss() }
+            } else { saveFailed = true }
+            return
+        }
         if showPostCheck { savePostCheckAndDismiss() }
         else if machine.state == .safetyAbort || machine.state == .cancelled { saveImmediatelyIfNeeded(machine.state) }
     }
@@ -595,11 +674,13 @@ struct BreathingView: View {
     let title: String
     let duration: Int
     let plannedKind: ActivityKind?
+    let plannedDayID: UUID?
     @Environment(LocalHistory.self) private var history
     @State private var remaining: Int
     @State private var completionLogged = false
+    @State private var planSaveFailed = false
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-    init(title: String, duration: Int, plannedKind: ActivityKind? = nil) { self.title = title; self.duration = duration; self.plannedKind = plannedKind; _remaining = State(initialValue: duration) }
+    init(title: String, duration: Int, plannedKind: ActivityKind? = nil, plannedDayID: UUID? = nil) { self.title = title; self.duration = duration; self.plannedKind = plannedKind; self.plannedDayID = plannedDayID; _remaining = State(initialValue: duration) }
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
@@ -609,13 +690,21 @@ struct BreathingView: View {
                     .accessibilityLabel("Sisa waktu \(remaining / 60) menit \(remaining % 60) detik")
                 Text("Tarik napas perlahan. Perhatikan sensasi tanpa harus bertindak.").foregroundStyle(.secondary).multilineTextAlignment(.center)
             }.frame(maxWidth: .infinity, minHeight: 520).padding()
-        }.onReceive(timer) { _ in
-            if remaining > 0 { remaining -= 1 }
-            if remaining == 0, !completionLogged, let plannedKind {
-                history.completeTodayPlan(kind: plannedKind)
-                completionLogged = true
-            }
         }
+        .onReceive(timer) { _ in
+            if remaining > 0 { remaining -= 1 }
+            if remaining == 0, !completionLogged, !planSaveFailed { completePlannedActivity() }
+        }
+        .alert("Status rencana belum tersimpan", isPresented: $planSaveFailed) { Button("Coba lagi") { completePlannedActivity() } } message: { Text("Latihan napas selesai, tetapi status rencana perlu dicoba lagi.") }
+    }
+
+    private func completePlannedActivity() {
+        guard let plannedKind else { completionLogged = true; return }
+        let saved: Bool
+        if let plannedDayID { saved = history.completeTodayPlan(id: plannedDayID, performedKind: plannedKind) }
+        else { saved = history.completeTodayPlan(kind: plannedKind) }
+        completionLogged = saved
+        planSaveFailed = !saved
     }
 }
 
@@ -652,7 +741,12 @@ struct ProgressView: View {
                     Section("Ringkasan privat") {
                         HStack { Text("Total check-in"); Spacer(); Text("\(history.checkIns.count)").monospacedDigit() }
                         if !history.checkIns.isEmpty { HStack { Text("Rata-rata intensitas"); Spacer(); Text(String(format: "%.1f", averageIntensity)).monospacedDigit() } }
-                        if !history.urgeOutcomes.isEmpty { HStack { Text("Rata-rata turun setelah reset"); Spacer(); Text(String(format: "%.1f", averageUrgeReduction)).monospacedDigit() } }
+                        if !history.urgeOutcomes.isEmpty {
+                            HStack { Text("Rata-rata sebelum reset"); Spacer(); Text(String(format: "%.1f", averageUrgeBefore)).monospacedDigit() }
+                            HStack { Text("Rata-rata sesudah reset"); Spacer(); Text(String(format: "%.1f", averageUrgeAfter)).monospacedDigit() }
+                            HStack { Text("Perubahan rata-rata"); Spacer(); Text(String(format: "%+.1f", averageUrgeChange)).monospacedDigit() }
+                            Text("Nilai perubahan negatif berarti intensitas menurun.").font(.caption).foregroundStyle(.secondary)
+                        }
                         HStack { Text("Safety hold tercatat"); Spacer(); Text("\(history.safetyHoldCount)").monospacedDigit() }
                         HStack { Text("Guided session"); Spacer(); Text("\(history.sessions.count)").monospacedDigit() }
                         HStack { Text("Aktivitas gerak"); Spacer(); Text("\(history.exercises.count)").monospacedDigit() }
@@ -684,7 +778,9 @@ struct ProgressView: View {
         }
     }
     private var averageIntensity: Double { Double(history.checkIns.map(\.intensity).reduce(0, +)) / Double(history.checkIns.count) }
-    private var averageUrgeReduction: Double { Double(history.urgeOutcomes.map { max(0, $0.initialIntensity - $0.finalIntensity) }.reduce(0, +)) / Double(history.urgeOutcomes.count) }
+    private var averageUrgeBefore: Double { Double(history.urgeOutcomes.map(\.initialIntensity).reduce(0, +)) / Double(history.urgeOutcomes.count) }
+    private var averageUrgeAfter: Double { Double(history.urgeOutcomes.map(\.finalIntensity).reduce(0, +)) / Double(history.urgeOutcomes.count) }
+    private var averageUrgeChange: Double { averageUrgeAfter - averageUrgeBefore }
     private var phaseName: String { switch history.effectiveProgramPhase { case .assessmentRequired: "Baseline"; case .awareness: "Kesadaran"; case .basicControl: "Kontrol dasar"; case .stability: "Stabilitas"; case .transfer: "Transfer"; case .independence: "Mandiri"; case .safetyHold: "Pemulihan" } }
     private func scoreRow(_ title: String, value: Int, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -773,10 +869,36 @@ struct LessonView: View {
     let title: String
     let content: String
     let plannedKind: ActivityKind?
+    let plannedDayID: UUID?
     @Environment(LocalHistory.self) private var history
     @State private var completed = false
-    init(title: String, body: String, plannedKind: ActivityKind? = nil) { self.title = title; self.content = body; self.plannedKind = plannedKind }
-    var body: some View { ScrollView { VStack(alignment: .leading, spacing: 20) { Text(title).font(.largeTitle.bold()); Text(content).font(.body).lineSpacing(5); Text("TEMPO adalah panduan wellness dan tidak menggantikan diagnosis atau perawatan medis.").font(.footnote).foregroundStyle(.secondary); if let plannedKind { Button(completed ? "Materi selesai" : "Tandai selesai") { if history.completeTodayPlan(kind: plannedKind) { completed = true } }.buttonStyle(.borderedProminent).disabled(completed) } }.padding() }.navigationTitle("Belajar").navigationBarTitleDisplayMode(.inline) }
+    @State private var saveFailed = false
+    init(title: String, body: String, plannedKind: ActivityKind? = nil, plannedDayID: UUID? = nil) { self.title = title; self.content = body; self.plannedKind = plannedKind; self.plannedDayID = plannedDayID }
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Text(title).font(.largeTitle.bold())
+                Text(content).font(.body).lineSpacing(5)
+                Text("TEMPO adalah panduan wellness dan tidak menggantikan diagnosis atau perawatan medis.").font(.footnote).foregroundStyle(.secondary)
+                if plannedKind != nil {
+                    Button(completed ? "Materi selesai" : "Tandai selesai") { completeLesson() }
+                        .buttonStyle(.borderedProminent).disabled(completed)
+                }
+            }.padding()
+        }
+        .navigationTitle("Belajar")
+        .navigationBarTitleDisplayMode(.inline)
+        .alert("Status rencana belum tersimpan", isPresented: $saveFailed) { Button("Coba lagi") { completeLesson() } } message: { Text("Materi selesai, tetapi status rencana perlu dicoba lagi.") }
+    }
+
+    private func completeLesson() {
+        guard let plannedKind else { return }
+        let saved: Bool
+        if let plannedDayID { saved = history.completeTodayPlan(id: plannedDayID, performedKind: plannedKind) }
+        else { saved = history.completeTodayPlan(kind: plannedKind) }
+        completed = saved
+        saveFailed = !saved
+    }
 }
 
 struct SettingsView: View {
