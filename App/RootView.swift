@@ -65,13 +65,14 @@ struct OnboardingView: View {
 
 struct TodayView: View {
     @State private var showCheckIn = false
+    @State private var showBreathing = false
     var body: some View { NavigationStack { ScrollView { VStack(alignment: .leading, spacing: 20) {
         Text("TEMPO").font(.caption.weight(.bold)).foregroundStyle(.cyan)
         Text("Ritme yang lebih tenang.").font(.largeTitle.bold())
-        Card { VStack(alignment: .leading, spacing: 12) { Text("Fase kesadaran · Minggu 1").foregroundStyle(.secondary); Text("Mulai aktivitas hari ini").font(.title2.bold()); Text("Napas singkat dan jalan santai · 20 menit").foregroundStyle(.secondary); Button("Mulai") {}.buttonStyle(.borderedProminent) } }
+        Card { VStack(alignment: .leading, spacing: 12) { Text("Fase kesadaran · Minggu 1").foregroundStyle(.secondary); Text("Mulai aktivitas hari ini").font(.title2.bold()); Text("Napas singkat dan jalan santai · 20 menit").foregroundStyle(.secondary); Button("Mulai") { showBreathing = true }.buttonStyle(.borderedProminent) } }
         Button { showCheckIn = true } label: { HStack { Image(systemName: "bolt.heart.fill"); VStack(alignment: .leading) { Text("Aku lagi terangsang").font(.headline); Text("Dapatkan rekomendasi privat dalam 15 detik").font(.caption).opacity(0.8) }; Spacer(); Image(systemName: "chevron.right") }.padding().frame(maxWidth: .infinity).background(Color.indigo.opacity(0.65), in: RoundedRectangle(cornerRadius: 24)) }.accessibilityLabel("Aku lagi terangsang, mulai check-in cepat")
         HStack { Metric(title: "Kesadaran", value: "—"); Metric(title: "Pemulihan", value: "—") }
-    }.padding() }.background(Color(red: 0.035, green: 0.04, blue: 0.05)).navigationBarHidden(true).sheet(isPresented: $showCheckIn) { UrgeCheckInView() } } }
+    }.padding() }.background(Color(red: 0.035, green: 0.04, blue: 0.05)).navigationBarHidden(true).sheet(isPresented: $showCheckIn) { UrgeCheckInView() }.sheet(isPresented: $showBreathing) { NavigationStack { BreathingView(title: "Napas singkat", duration: 240).toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Tutup") { showBreathing = false } } } } } } }
 }
 struct Card<Content: View>: View { @ViewBuilder var content: Content; var body: some View { content.padding(20).frame(maxWidth: .infinity, alignment: .leading).background(Color(red: 0.08, green: 0.095, blue: 0.13), in: RoundedRectangle(cornerRadius: 24)) } }
 struct Metric: View { let title: String; let value: String; var body: some View { VStack(alignment: .leading) { Text(title).foregroundStyle(.secondary); Text(value).font(.title.bold()) }.padding().frame(maxWidth: .infinity, alignment: .leading).background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 18)) } }
