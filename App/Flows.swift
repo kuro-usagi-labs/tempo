@@ -250,6 +250,7 @@ struct SettingsView: View {
     @AppStorage("hapticsEnabled") private var haptics = true
     @AppStorage("privacyLockEnabled") private var privacyLockEnabled = false
     @State private var showDeletionConfirmation = false
+    @AppStorage("dailyPlanRemindersEnabled") private var remindersEnabled = false
     var body: some View {
         NavigationStack {
             Form {
@@ -260,6 +261,8 @@ struct SettingsView: View {
                 }
                 Section("Preferensi") {
                     Toggle("Haptics", isOn: $haptics)
+                    Toggle("Pengingat rencana harian", isOn: $remindersEnabled)
+                        .onChange(of: remindersEnabled) { _, enabled in if enabled { Task { await LocalNotifications.requestAndScheduleDailyPlan() } } }
                     NavigationLink("Tentang keselamatan") { Text("TEMPO bukan alat diagnosis atau layanan darurat. Nyeri, perdarahan, demam, perih saat kencing, atau cairan tidak biasa memerlukan penilaian profesional.").padding() }
                 }
             }.navigationTitle("Pengaturan")
@@ -269,6 +272,8 @@ struct SettingsView: View {
                 UserDefaults.standard.removeObject(forKey: "discreetTerminology")
                 UserDefaults.standard.removeObject(forKey: "hapticsEnabled")
                 UserDefaults.standard.removeObject(forKey: "privacyLockEnabled")
+                UserDefaults.standard.removeObject(forKey: "dailyPlanRemindersEnabled")
+                LocalNotifications.removeAll()
                 history.deleteAll()
             }
         } message: { Text("Tindakan ini menghapus preferensi dan data lokal yang tersimpan. Ini tidak dapat dibatalkan.") }
