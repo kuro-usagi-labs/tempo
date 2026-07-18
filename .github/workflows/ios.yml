@@ -25,14 +25,21 @@ jobs:
       - name: Compile app for simulator
         run: xcodebuild build -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO
       - name: Build archive
-        run: xcodebuild archive -project Tempo.xcodeproj -scheme Tempo -archivePath "$PWD/build/Tempo.xcarchive" -sdk iphoneos CODE_SIGNING_ALLOWED=NO
-      - name: Create unsigned IPA artifact
+        run: xcodebuild archive -project Tempo.xcodeproj -scheme Tempo -configuration Release -destination 'generic/platform=iOS' -archivePath "$PWD/build/Tempo.xcarchive" -sdk iphoneos CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+      - name: Create sideload-ready IPA artifact
         run: |
+          set -euo pipefail
+          app_path="build/Tempo.xcarchive/Products/Applications/Tempo.app"
+          test -d "$app_path"
+          /usr/bin/codesign --force --deep --sign - --timestamp=none "$app_path"
+          /usr/bin/codesign --verify --deep --strict --verbose=2 "$app_path"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app_path/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundlePackageType' "$app_path/Info.plist"
           mkdir -p build/Payload
-          cp -R build/Tempo.xcarchive/Products/Applications/Tempo.app build/Payload/
-          ditto -c -k --sequesterRsrc --keepParent build/Payload build/Tempo-unsigned.ipa
+          cp -R "$app_path" build/Payload/
+          (cd build && /usr/bin/zip -qry Tempo-sideload.ipa Payload)
       - uses: actions/upload-artifact@v4
         with:
-          name: Tempo-unsigned-ipa
-          path: build/Tempo-unsigned.ipa
+          name: Tempo-sideload-ipa
+          path: build/Tempo-sideload.ipa
           if-no-files-found: error
