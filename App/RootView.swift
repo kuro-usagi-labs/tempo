@@ -67,10 +67,13 @@ struct TodayView: View {
     @State private var showCheckIn = false
     @State private var showBreathing = false
     @State private var showHealthCheck = false
+    @State private var showBaseline = false
+    @AppStorage("baselineCompleted") private var baselineCompleted = false
     private let weeklyPlan = WeeklyScheduler().beginnerPlan()
     var body: some View { NavigationStack { ScrollView { VStack(alignment: .leading, spacing: 20) {
         Text("TEMPO").font(.caption.weight(.bold)).foregroundStyle(.cyan)
         Text("Ritme yang lebih tenang.").font(.largeTitle.bold())
+        if !baselineCompleted { Button { showBaseline = true } label: { HStack { Image(systemName: "checklist"); VStack(alignment: .leading) { Text("Lengkapi baseline").font(.headline); Text("Tidur, kecemasan, aktivitas, dan keamanan · 2 menit").font(.caption) }; Spacer() }.padding().frame(maxWidth: .infinity).background(Color.cyan.opacity(0.2), in: RoundedRectangle(cornerRadius: 20)) } }
         Card { VStack(alignment: .leading, spacing: 12) { Text("Fase kesadaran · Minggu 1").foregroundStyle(.secondary); Text("Mulai aktivitas hari ini").font(.title2.bold()); Text("Napas singkat dan jalan santai · 20 menit").foregroundStyle(.secondary); Button("Mulai") { showBreathing = true }.buttonStyle(.borderedProminent) } }
         Button { showCheckIn = true } label: { HStack { Image(systemName: "bolt.heart.fill"); VStack(alignment: .leading) { Text("Aku lagi terangsang").font(.headline); Text("Dapatkan rekomendasi privat dalam 15 detik").font(.caption).opacity(0.8) }; Spacer(); Image(systemName: "chevron.right") }.padding().frame(maxWidth: .infinity).background(Color.indigo.opacity(0.65), in: RoundedRectangle(cornerRadius: 24)) }.accessibilityLabel("Aku lagi terangsang, mulai check-in cepat")
         Button { showHealthCheck = true } label: { HStack { Image(systemName: "cross.case.fill"); Text("Aku punya keluhan").font(.headline); Spacer(); Image(systemName: "chevron.right") }.padding().frame(maxWidth: .infinity).background(Color.red.opacity(0.22), in: RoundedRectangle(cornerRadius: 20)) }
@@ -81,7 +84,14 @@ struct TodayView: View {
                 HStack { Text(dayLabel(activity.day)).foregroundStyle(.secondary).frame(width: 42, alignment: .leading); Text(activityLabel(activity.kind)); Spacer(); Image(systemName: activityIcon(activity.kind)).foregroundStyle(.cyan) }
             }
         }.padding().background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 20))
-    }.padding() }.background(Color(red: 0.035, green: 0.04, blue: 0.05)).navigationBarHidden(true).sheet(isPresented: $showCheckIn) { UrgeCheckInView() }.sheet(isPresented: $showBreathing) { NavigationStack { BreathingView(title: "Napas singkat", duration: 240).toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Tutup") { showBreathing = false } } } } }.sheet(isPresented: $showHealthCheck) { HealthCheckView() } } }
+    }.padding() }.background(Color(red: 0.035, green: 0.04, blue: 0.05)).navigationBarHidden(true).sheet(isPresented: $showCheckIn) { UrgeCheckInView() }.sheet(isPresented: $showBreathing) { NavigationStack { BreathingView(title: "Napas singkat", duration: 240).toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Tutup") { showBreathing = false } } } } }.sheet(isPresented: $showHealthCheck) { HealthCheckView() }.sheet(isPresented: $showBaseline) { BaselineView() } } }
+}
+
+struct BaselineView: View {
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("baselineCompleted") private var completed = false
+    @State private var anxiety = 5; @State private var sleep = 7; @State private var activity = "Jarang"
+    var body: some View { NavigationStack { Form { Section("Kondisi saat ini") { Stepper("Kecemasan: \(anxiety)/10", value: $anxiety, in: 1...10); Stepper("Tidur: \(sleep) jam", value: $sleep, in: 0...12); Picker("Aktivitas mingguan", selection: $activity) { Text("Jarang").tag("Jarang"); Text("Pemula").tag("Pemula"); Text("Rutin").tag("Rutin") } }; Section { Button("Simpan baseline") { completed = true; dismiss() }.buttonStyle(.borderedProminent) } }.navigationTitle("Baseline") } }
 }
 private func dayLabel(_ day: Int) -> String { ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"][day] }
 private func activityLabel(_ kind: ActivityKind) -> String { switch kind { case .guided: "Guided session"; case .breathing: "Napas singkat"; case .cardio: "Jalan / cardio"; case .strength: "Kekuatan pemula"; case .recovery: "Pemulihan"; case .education: "Materi singkat"; case .review: "Tinjauan mingguan" } }
