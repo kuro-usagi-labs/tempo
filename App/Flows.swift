@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct UrgeCheckInView: View {
     @Environment(\.dismiss) private var dismiss
@@ -27,9 +28,15 @@ struct TrainingView: View {
         NavigationStack {
             List {
                 Section("Sesi") {
-                    Label("Guided control session", systemImage: "timer")
-                    Label("Urge surfing · 5 menit", systemImage: "wind")
-                    Label("Napas pemulihan", systemImage: "circle.dotted")
+                    NavigationLink { GuidedSessionView() } label: {
+                        Label("Guided control session", systemImage: "timer")
+                    }
+                    NavigationLink { BreathingView(title: "Urge surfing", duration: 300) } label: {
+                        Label("Urge surfing · 5 menit", systemImage: "wind")
+                    }
+                    NavigationLink { BreathingView(title: "Napas pemulihan", duration: 60) } label: {
+                        Label("Napas pemulihan", systemImage: "circle.dotted")
+                    }
                 }
                 Section("Gerak") {
                     Label("Jalan santai · 20 menit", systemImage: "figure.walk")
@@ -37,6 +44,116 @@ struct TrainingView: View {
                 }
             }.navigationTitle("Latihan")
         }
+    }
+}
+
+struct GuidedSessionView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var machine = GuidedSessionMachine()
+    @State private var arousal = 3
+    @State private var seconds = 0
+    @State private var safetyConcern = false
+    @State private var isPrepared = false
+    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        VStack(spacing: 22) {
+            Text(stateTitle).font(.title.bold()).multilineTextAlignment(.center)
+            Text(stateMessage).foregroundStyle(.secondary).multilineTextAlignment(.center)
+
+            if machine.state == .precheck {
+                Toggle("Saya memiliki nyeri atau iritasi", isOn: $safetyConcern)
+                    .padding().background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
+                Button(safetyConcern ? "Lihat health check" : "Mulai persiapan") {
+                    if safetyConcern { machine.abortForSafety() } else { machine.start() }
+                }.buttonStyle(.borderedProminent).controlSize(.large)
+            } else if machine.state == .prepare {
+                BreathingOrbView()
+                Button("Saya siap") { machine.beginActive() }.buttonStyle(.borderedProminent).controlSize(.large)
+            } else if [.activeLow, .activeRising, .warning].contains(machine.state) {
+                arousalControls
+            } else if machine.state == .pausedRecovery {
+                BreathingOrbView()
+                Text("Pemulihan · \(max(0, 30 - seconds)) dtk").font(.headline.monospacedDigit())
+                Button("Intensitas sudah 4 atau lebih rendah") {
+                    guard seconds >= 30 else { return }
+                    machine.recovered(level: arousal)
+                }.buttonStyle(.borderedProminent).disabled(seconds < 30 || arousal > 4)
+            } else if machine.state == .resumeReady {
+                Text("Siklus \(machine.cycles) selesai").font(.headline)
+                Button("Lanjut perlahan") { machine.beginActive() }.buttonStyle(.borderedProminent).controlSize(.large)
+            } else {
+                terminalContent
+            }
+
+            Button("Akhiri sesi", role: .cancel) { dismiss() }.foregroundStyle(.secondary)
+        }
+        .padding()
+        .background(machine.state == .warning ? Color.red.opacity(0.22) : Color.black)
+        .navigationBarBackButtonHidden(true)
+        .onReceive(timer) { _ in tick() }
+        .onChange(of: arousal) { _, newValue in
+            guard [.activeLow, .activeRising, .warning].contains(machine.state) else { return }
+            machine.rising(level: newValue, threshold: 7)
+            if newValue >= 7 { UIImpactFeedbackGenerator(style: .heavy).impactOccurred() }
+        }
+    }
+
+    private var arousalControls: some View {
+        VStack(spacing: 16) {
+            Text("Intensitas: \(arousal)").font(.system(size: 48, weight: .bold, design: .rounded))
+                .foregroundStyle(arousal >= 7 ? .red : arousal >= 6 ? .orange : .indigo)
+            Slider(value: Binding(get: { Double(arousal) }, set: { arousal = Int($0.rounded()) }), in: 1...10, step: 1)
+            HStack {
+                Button("Stabil") { arousal = max(1, arousal - 1) }.buttonStyle(.bordered)
+                Button("Naik") { arousal = min(10, arousal + 1) }.buttonStyle(.bordered)
+            }
+            Button(machine.state == .warning ? "Pause sekarang" : "Pause") {
+                machine.pause(); seconds = 0; UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+            }.buttonStyle(.borderedProminent).tint(machine.state == .warning ? .red : .indigo).controlSize(.large)
+            Button("Hampir terlambat") { machine.earlyCompletion() }.foregroundStyle(.orange)
+        }
+    }
+
+    @ViewBuilder private var terminalContent: some View {
+        Image(systemName: machine.state == .safetyAbort ? "cross.case.fill" : "checkmark.circle.fill")
+            .font(.system(size: 56)).foregroundStyle(machine.state == .safetyAbort ? .red : .green)
+        Text(machine.state == .safetyAbort ? "Hentikan latihan dulu" : "Sesi selesai").font(.title2.bold())
+        Text(machine.state == .safetyAbort ? "Keluhan fisik perlu dinilai tenaga kesehatan sebelum latihan dilanjutkan." : "Ini data yang berguna, bukan penilaian atas dirimu.")
+            .foregroundStyle(.secondary).multilineTextAlignment(.center)
+    }
+
+    private var stateTitle: String { switch machine.state { case .precheck: "Periksa dulu"; case .prepare: "Tenangkan tubuh"; case .activeLow, .activeRising: "Tetap sadar"; case .warning: "Pause sekarang"; case .pausedRecovery: "Biarkan intensitas turun"; case .resumeReady: "Kembali dalam rentang aman"; default: "" } }
+    private var stateMessage: String { switch machine.state { case .warning: "Hands off. Tarik napas dan biarkan tubuh melunak."; case .prepare: "Rilekskan rahang, perut, paha, dan bokong. Jangan mengejar durasi."; case .pausedRecovery: "Kamu dapat lanjut hanya setelah jeda minimum dan intensitas turun."; default: "TEMPO mendukung latihan terstruktur, bukan diagnosis medis." } }
+    private func tick() { guard ![.precheck, .completed, .earlyCompletion, .cancelled, .safetyAbort, .timeLimitReached].contains(machine.state) else { return }; seconds += 1; if seconds >= 1_200 { machine.earlyCompletion() } }
+}
+
+struct BreathingView: View {
+    let title: String
+    let duration: Int
+    @State private var remaining: Int
+    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    init(title: String, duration: Int) { self.title = title; self.duration = duration; _remaining = State(initialValue: duration) }
+    var body: some View {
+        VStack(spacing: 24) {
+            Text(title).font(.title.bold())
+            BreathingOrbView()
+            Text("\(remaining / 60):\(String(format: "%02d", remaining % 60))").font(.title.monospacedDigit())
+            Text("Tarik napas perlahan. Perhatikan sensasi tanpa harus bertindak.").foregroundStyle(.secondary).multilineTextAlignment(.center)
+        }.padding().onReceive(timer) { _ in if remaining > 0 { remaining -= 1 } }
+    }
+}
+
+struct BreathingOrbView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var expanded = false
+    var body: some View {
+        Circle().fill(LinearGradient(colors: [.indigo, .cyan], startPoint: .topLeading, endPoint: .bottomTrailing))
+            .frame(width: 150, height: 150).shadow(color: .cyan.opacity(0.5), radius: 24)
+            .scaleEffect(expanded || reduceMotion ? 1 : 0.72)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 4).repeatForever(autoreverses: true), value: expanded)
+            .onAppear { expanded = true }
+            .accessibilityLabel("Panduan napas")
     }
 }
 
