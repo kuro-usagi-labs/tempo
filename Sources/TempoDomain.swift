@@ -34,6 +34,9 @@ public struct RuleEngine: Sendable {
     public static let rulesetVersion = "1.0.0"
     public init() {}
     public func evaluate(_ c: DecisionContext) -> Recommendation {
+        if c.programPhase == .safetyHold {
+            return Recommendation(.healthCheck, .medical, "safety.active_hold", "Complete a symptom recheck before guided training.", blocked: true)
+        }
         if c.bloodReported || c.fever || c.pain || c.pelvicOrTesticularPain {
             return Recommendation(.healthCheck, .urgent, "safety.urgent", "Stop training for now. Your answers need urgent health guidance.", blocked: true)
         }
@@ -41,6 +44,9 @@ public struct RuleEngine: Sendable {
             return Recommendation(.healthCheck, .medical, "safety.urinary", "A health check is the better next step. Pause guided training.", blocked: true)
         }
         if c.irritation { return Recommendation(.recovery, .caution, "safety.irritation", "Give your body time to recover. Guided training is paused for 48–72 hours.", blocked: true) }
+        if c.programPhase == .assessmentRequired, c.intent == .training {
+            return Recommendation(.education, .caution, "readiness.baseline_required", "Complete the baseline before starting guided training.", blocked: true)
+        }
         if (c.hoursSinceLastSession ?? .infinity) <= 24 || c.guidedSessionsLast7Days >= 3 {
             return Recommendation(.recovery, .caution, "readiness.recent_session", "Rest is part of the program. Another session now is unlikely to help.")
         }

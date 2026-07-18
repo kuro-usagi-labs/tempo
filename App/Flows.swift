@@ -14,23 +14,36 @@ struct UrgeCheckInView: View {
     private var triggerQuestion: some View { ChoiceQuestion(title: "Apa konteksnya sekarang?", selection: $trigger, labels: [.init(.desire, "Gairah seksual"), .init(.boredom, "Bosan"), .init(.stress, "Stres"), .init(.loneliness, "Kesepian"), .init(.sleep, "Sulit tidur")]) }
     private var intentQuestion: some View { ChoiceQuestion(title: "Apa yang kamu butuhkan?", selection: $intent, labels: [.init(.calm, "Menenangkan diri"), .init(.training, "Latihan kontrol"), .init(.privateSession, "Sesi pribadi")]) }
     private var safetyQuestion: some View { VStack(spacing: 20) { Text("Ada nyeri, cedera, perih saat kencing, atau cairan tidak biasa?").font(.title2.bold()).multilineTextAlignment(.center); Toggle("Ya, ada keluhan", isOn: $hasSafetyFlag).padding().background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 16)); Text("Keluhan apa pun akan menghentikan latihan dan mengarahkanmu ke health check.").foregroundStyle(.secondary).multilineTextAlignment(.center) }.padding() }
-    private func advance() { if step < 3 { step += 1 } else { var c = DecisionContext(); c.urgeIntensity = intensity; c.trigger = trigger; c.intent = intent; c.pain = hasSafetyFlag; let recommendation = RuleEngine().evaluate(c); history.add(intensity: intensity, trigger: trigger, intent: intent, recommendation: recommendation); result = recommendation } }
+    private func advance() { if step < 3 { step += 1 } else { var c = DecisionContext(); c.programPhase = history.effectiveProgramPhase; c.urgeIntensity = intensity; c.trigger = trigger; c.intent = intent; c.pain = hasSafetyFlag; let recommendation = RuleEngine().evaluate(c); history.add(intensity: intensity, trigger: trigger, intent: intent, recommendation: recommendation); result = recommendation } }
 }
 
 struct ChoiceOption<T: Hashable>: Identifiable { let value: T; let title: String; var id: T { value }; init(_ value: T, _ title: String) { self.value = value; self.title = title } }
 struct ChoiceQuestion<T: Hashable>: View { let title: String; @Binding var selection: T; let labels: [ChoiceOption<T>]; var body: some View { VStack(alignment: .leading, spacing: 14) { Text(title).font(.title2.bold()).padding(.bottom, 12); ForEach(labels) { item in Button { selection = item.value } label: { HStack { Text(item.title); Spacer(); if selection == item.value { Image(systemName: "checkmark.circle.fill") } }.padding().background(selection == item.value ? Color.indigo.opacity(0.6) : Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 16)) } } }.padding() } }
 
-struct RecommendationView: View { let result: Recommendation; let dismiss: DismissAction; var body: some View { VStack(spacing: 18) { Image(systemName: result.blocksGuidedTraining ? "cross.case.fill" : "sparkles").font(.system(size: 52)).foregroundStyle(result.blocksGuidedTraining ? .red : .cyan); Text(title).font(.title.bold()).multilineTextAlignment(.center); Text(result.message).foregroundStyle(.secondary).multilineTextAlignment(.center); Text("Mengapa rekomendasi ini?").font(.headline); Text("TEMPO memeriksa keselamatan, pemulihan, intensitas, dan tujuanmu sebelum memberi saran.").font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center); Button("Selesai") { dismiss() }.buttonStyle(.borderedProminent) }.padding() }
+struct RecommendationView: View { let result: Recommendation; let dismiss: DismissAction; @State private var showAction = false; var body: some View { VStack(spacing: 18) { Image(systemName: result.blocksGuidedTraining ? "cross.case.fill" : "sparkles").font(.system(size: 52)).foregroundStyle(result.blocksGuidedTraining ? .red : .cyan); Text(title).font(.title.bold()).multilineTextAlignment(.center); Text(result.message).foregroundStyle(.secondary).multilineTextAlignment(.center); Text("Mengapa rekomendasi ini?").font(.headline); Text("TEMPO memeriksa keselamatan, pemulihan, intensitas, dan tujuanmu sebelum memberi saran.").font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center); Button(primaryTitle) { if hasDirectAction { showAction = true } else { dismiss() } }.buttonStyle(.borderedProminent); Button("Tutup") { dismiss() }.foregroundStyle(.secondary) }.padding().sheet(isPresented: $showAction) { actionDestination } }
     private var title: String { switch result.action { case .healthCheck: "Hentikan latihan dulu"; case .recovery: "Waktunya pemulihan"; case .regulate, .urgeSurf: "Mari tenangkan ritme"; case .guidedSession: "Kamu siap berlatih"; case .privateSession: "Tetap pelan dan aman"; default: "Langkah kecil untuk hari ini" } }
+    private var primaryTitle: String { switch result.action { case .healthCheck: "Buka health check"; case .recovery, .regulate, .urgeSurf: "Mulai napas terpandu"; case .guidedSession: "Mulai guided session"; default: "Selesai" } }
+    private var hasDirectAction: Bool { [.healthCheck, .recovery, .regulate, .urgeSurf, .guidedSession].contains(result.action) }
+    @ViewBuilder private var actionDestination: some View { switch result.action { case .healthCheck: HealthCheckView(); case .guidedSession: NavigationStack { GuidedSessionView() }; default: NavigationStack { BreathingView(title: "Napas pemulihan", duration: 300).toolbar { Button("Tutup") { showAction = false } } } } }
 }
 
 struct TrainingView: View {
+    @Environment(LocalHistory.self) private var history
     var body: some View {
         NavigationStack {
             List {
                 Section("Sesi") {
-                    NavigationLink { GuidedSessionView() } label: {
-                        Label("Guided control session", systemImage: "timer")
+                    if let hold = history.activeSafetyHold {
+                        NavigationLink { HealthCheckView() } label: {
+                            Label("Guided session dijeda · periksa gejala", systemImage: "cross.case.fill").foregroundStyle(.red)
+                        }
+                        Text("Safety hold aktif sejak \(hold.createdAt.formatted(date: .abbreviated, time: .omitted)). Tidak dapat dilewati.").font(.caption).foregroundStyle(.secondary)
+                    } else if history.baseline == nil {
+                        Label("Lengkapi baseline dari tab Hari ini", systemImage: "checklist").foregroundStyle(.orange)
+                    } else {
+                        NavigationLink { GuidedSessionView() } label: {
+                            Label("Guided control session", systemImage: "timer")
+                        }
                     }
                     NavigationLink { BreathingView(title: "Urge surfing", duration: 300) } label: {
                         Label("Urge surfing · 5 menit", systemImage: "wind")
@@ -136,6 +149,7 @@ struct GuidedSessionView: View {
         }
         .background(machine.state == .pausedRecovery ? Color.red.opacity(0.12) : Color.black)
         .navigationBarBackButtonHidden(true)
+        .onAppear { if history.activeSafetyHold != nil { machine.abortForSafety() } }
         .onReceive(timer) { now in updateTimes(now: now) }
         .onChange(of: arousal) { _, newValue in handleArousalChange(newValue) }
         .onChange(of: machine.state) { _, newState in handleStateChange(newState) }
@@ -324,6 +338,7 @@ struct GuidedSessionView: View {
     private func saveImmediatelyIfNeeded(_ state: GuidedSessionState) {
         guard !resultSaved else { return }
         history.addSession(cycles: machine.cycles, terminalState: state, durationSeconds: totalElapsed)
+        if state == .safetyAbort { _ = history.recordSafetyHold(reasonCode: "safety.guided-precheck", severity: RecommendationSeverity.medical.rawValue, source: "guided-session") }
         resultSaved = true
     }
 
@@ -435,7 +450,6 @@ struct SettingsView: View {
     @AppStorage("biometricLockEnabled") private var biometricLockEnabled = false
     @State private var showDeletionConfirmation = false
     @AppStorage("dailyPlanRemindersEnabled") private var remindersEnabled = false
-    @AppStorage("baselineCompleted") private var baselineCompleted = false
     @AppStorage("onboardingCompleted") private var onboardingCompleted = false
     var body: some View {
         NavigationStack {
@@ -465,7 +479,7 @@ struct SettingsView: View {
                 privacyCoverEnabled = false
                 biometricLockEnabled = false
                 remindersEnabled = false
-                baselineCompleted = false
+                UserDefaults.standard.removeObject(forKey: "baselineCompleted")
                 onboardingCompleted = false
                 UserDefaults.standard.removeObject(forKey: "privacyLockEnabled")
                 LocalNotifications.removeAll()

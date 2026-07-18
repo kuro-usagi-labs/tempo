@@ -11,8 +11,26 @@ final class TempoDomainTests: XCTestCase {
         XCTAssertTrue(recommendation.blocksGuidedTraining)
     }
 
+    func testSafetyHoldAlwaysBlocksTraining() {
+        var context = DecisionContext()
+        context.programPhase = .safetyHold
+        context.intent = .training
+        context.urgeIntensity = 7
+        let recommendation = RuleEngine().evaluate(context)
+        XCTAssertEqual(recommendation.action, .healthCheck)
+        XCTAssertTrue(recommendation.blocksGuidedTraining)
+    }
+
+    func testGuidedTrainingRequiresBaseline() {
+        var context = DecisionContext()
+        context.programPhase = .assessmentRequired
+        context.intent = .training
+        XCTAssertTrue(RuleEngine().evaluate(context).blocksGuidedTraining)
+    }
+
     func testRecentSessionRoutesToRecovery() {
         var context = DecisionContext()
+        context.programPhase = .awareness
         context.hoursSinceLastSession = 6
         context.intent = .training
         XCTAssertEqual(RuleEngine().evaluate(context).action, .recovery)
@@ -20,6 +38,7 @@ final class TempoDomainTests: XCTestCase {
 
     func testSessionWithinTwentyFourHoursRoutesToRecovery() {
         var context = DecisionContext()
+        context.programPhase = .awareness
         context.hoursSinceLastSession = 18
         context.urgeIntensity = 6
         context.trigger = .desire

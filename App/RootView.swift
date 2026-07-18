@@ -69,12 +69,13 @@ struct OnboardingView: View {
 }
 
 struct TodayView: View {
+    @Environment(LocalHistory.self) private var history
     @State private var showCheckIn = false
     @State private var showBreathing = false
     @State private var showHealthCheck = false
     @State private var showBaseline = false
-    @AppStorage("baselineCompleted") private var baselineCompleted = false
-    private let weeklyPlan = WeeklyScheduler().beginnerPlan()
+    private var baselineCompleted: Bool { history.baseline != nil }
+    private var weeklyPlan: [PlannedActivity] { WeeklyScheduler().beginnerPlan(highStress: (history.baseline?.anxiety ?? 0) >= 8, irritation: history.activeSafetyHold != nil) }
     var body: some View {
         NavigationStack {
             ZStack {
@@ -88,7 +89,7 @@ struct TodayView: View {
                     VStack(alignment: .leading, spacing: 20) {
                         header
                         if !baselineCompleted { baselinePrompt }
-                        todayHero
+                        if history.activeSafetyHold != nil { safetyHoldCard } else { todayHero }
                         quickActions
                         progressSnapshot
                         weeklyPlanCard
@@ -185,6 +186,21 @@ struct TodayView: View {
         .overlay { RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 1) }
     }
 
+    private var safetyHoldCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label("JEDA KESELAMATAN AKTIF", systemImage: "cross.case.fill")
+                .font(.caption.weight(.bold)).tracking(0.6).foregroundStyle(TempoPalette.danger)
+            Text("Periksa kondisi sebelum berlatih").font(.system(.title2, design: .rounded, weight: .bold)).foregroundStyle(TempoPalette.primary)
+            Text("Guided session dijeda sampai pemeriksaan gejala selesai tanpa tanda peringatan.")
+                .foregroundStyle(TempoPalette.secondary)
+            Button("Buka health check") { showHealthCheck = true }
+                .buttonStyle(.borderedProminent).tint(TempoPalette.danger)
+        }
+        .padding(22)
+        .background(TempoPalette.danger.opacity(0.08), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .overlay { RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(TempoPalette.danger.opacity(0.24), lineWidth: 1) }
+    }
+
     private var quickActions: some View {
         VStack(spacing: 12) {
             TodayActionButton(
@@ -236,9 +252,54 @@ struct TodayView: View {
 
 struct BaselineView: View {
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("baselineCompleted") private var completed = false
-    @State private var anxiety = 5; @State private var sleep = 7; @State private var activity = "Jarang"
-    var body: some View { NavigationStack { Form { Section("Kondisi saat ini") { Stepper("Kecemasan: \(anxiety)/10", value: $anxiety, in: 1...10); Stepper("Tidur: \(sleep) jam", value: $sleep, in: 0...12); Picker("Aktivitas mingguan", selection: $activity) { Text("Jarang").tag("Jarang"); Text("Pemula").tag("Pemula"); Text("Rutin").tag("Rutin") } }; Section { Button("Simpan baseline") { completed = true; dismiss() }.buttonStyle(.borderedProminent) } }.navigationTitle("Baseline") } }
+    @Environment(LocalHistory.self) private var history
+    @State private var onset = "Belum yakin"
+    @State private var context = "Keduanya"
+    @State private var control = 5
+    @State private var anxiety = 5
+    @State private var sleep = 7
+    @State private var activity = "Jarang"
+    @State private var rushedHabit = false
+    @State private var highStimulusPattern = false
+    @State private var safetySymptoms = false
+    @State private var saveFailed = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Pola saat ini") {
+                    Picker("Mulai dirasakan", selection: $onset) { ForEach(["Sejak awal", "Perubahan baru", "Belum yakin"], id: \.self) { Text($0).tag($0) } }
+                    Picker("Terjadi saat", selection: $context) { ForEach(["Sendiri", "Dengan pasangan", "Keduanya", "Belum yakin"], id: \.self) { Text($0).tag($0) } }
+                    Stepper("Kontrol yang dirasakan: \(control)/10", value: $control, in: 1...10)
+                }
+                Section("Kondisi dasar") {
+                    Stepper("Kecemasan: \(anxiety)/10", value: $anxiety, in: 1...10)
+                    Stepper("Tidur: \(sleep) jam", value: $sleep, in: 0...12)
+                    Picker("Aktivitas mingguan", selection: $activity) { Text("Jarang").tag("Jarang"); Text("Pemula").tag("Pemula"); Text("Rutin").tag("Rutin") }
+                }
+                Section("Kebiasaan") {
+                    Toggle("Sering terburu-buru", isOn: $rushedHabit)
+                    Toggle("Terbiasa dengan stimulus sangat tinggi", isOn: $highStimulusPattern)
+                }
+                Section("Keselamatan") {
+                    Toggle("Ada nyeri, cedera, darah, demam, perih saat kencing, atau cairan tidak biasa", isOn: $safetySymptoms)
+                    if safetySymptoms { Text("Latihan akan dijeda dan TEMPO akan membuka jalur health check.").foregroundStyle(.red) }
+                }
+                Section {
+                    Button("Simpan baseline") { save() }.buttonStyle(.borderedProminent)
+                }
+            }
+            .navigationTitle("Baseline")
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Tutup") { dismiss() } } }
+            .alert("Baseline belum tersimpan", isPresented: $saveFailed) { Button("Coba lagi") {} } message: { Text("TEMPO tidak dapat menyimpan data dengan aman. Tidak ada perubahan yang diterapkan.") }
+        }
+    }
+
+    private func save() {
+        let baseline = LocalBaseline(completedAt: .now, onset: onset, difficultyContext: context, perceivedControl: control, anxiety: anxiety, sleepHours: sleep, activityLevel: activity, rushedHabit: rushedHabit, highStimulusPattern: highStimulusPattern, hasSafetySymptoms: safetySymptoms, rulesetVersion: RuleEngine.rulesetVersion)
+        if history.saveBaseline(baseline) { UserDefaults.standard.removeObject(forKey: "baselineCompleted"); dismiss() }
+        else { saveFailed = true }
+    }
 }
 
 private enum TempoPalette {
@@ -298,8 +359,51 @@ private func activityIcon(_ kind: ActivityKind) -> String { switch kind { case .
 
 struct HealthCheckView: View {
     @Environment(\.dismiss) private var dismiss
-    @State private var symptom = false
-    var body: some View { NavigationStack { VStack(spacing: 20) { Image(systemName: "cross.case.fill").font(.system(size: 50)).foregroundStyle(.red); Text("Health check").font(.title.bold()); Text("Apakah kamu mengalami nyeri berat, darah, demam, perih saat kencing, cairan tidak biasa, atau cedera akut?").multilineTextAlignment(.center); Toggle("Ya, ada keluhan", isOn: $symptom).padding().background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 16)); Text(symptom ? "Hentikan latihan seksual untuk saat ini. Kondisi tersebut perlu penilaian tenaga kesehatan yang sesuai." : "Jika tidak ada tanda di atas, kamu tetap dapat memilih pemulihan atau check-in privat.").foregroundStyle(symptom ? .red : .secondary).multilineTextAlignment(.center); Button("Selesai") { dismiss() }.buttonStyle(.borderedProminent) }.padding().navigationTitle("Kesehatan").toolbar { Button("Tutup") { dismiss() } } } }
+    @Environment(LocalHistory.self) private var history
+    @State private var pain = false
+    @State private var bloodOrFever = false
+    @State private var urinaryOrDischarge = false
+    @State private var acuteInjury = false
+    @State private var confirmedComplete = false
+    @State private var saveFailed = false
+    private var hasSymptoms: Bool { pain || bloodOrFever || urinaryOrDischarge || acuteInjury }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Label("Pemeriksaan ini tidak membuat diagnosis. Jawab semua bagian sebelum melanjutkan.", systemImage: "cross.case.fill")
+                }
+                Section("Tanda keselamatan") {
+                    Toggle("Nyeri berat, panggul, testis, atau perut", isOn: $pain)
+                    Toggle("Darah, perdarahan, atau demam", isOn: $bloodOrFever)
+                    Toggle("Perih saat kencing atau cairan tidak biasa", isOn: $urinaryOrDischarge)
+                    Toggle("Cedera, bengkak, atau memar akut", isOn: $acuteInjury)
+                    Toggle("Saya sudah membaca dan menjawab semua bagian", isOn: $confirmedComplete)
+                }
+                Section {
+                    Text(hasSymptoms ? "Hentikan latihan. Gejala ini perlu dinilai tenaga kesehatan; kondisi berat atau memburuk memerlukan bantuan segera." : "Jika seluruh jawaban tidak, safety hold dapat diakhiri setelah pemeriksaan ulang ini.")
+                        .foregroundStyle(hasSymptoms ? .red : .secondary)
+                    Button(hasSymptoms ? "Simpan dan jeda latihan" : "Konfirmasi tidak ada gejala") { save() }
+                        .buttonStyle(.borderedProminent).disabled(!confirmedComplete)
+                }
+            }
+            .navigationTitle("Health check")
+            .toolbar { Button("Tutup") { dismiss() } }
+            .alert("Data belum tersimpan", isPresented: $saveFailed) { Button("Coba lagi") {} } message: { Text("TEMPO tidak dapat memperbarui safety hold dengan aman.") }
+        }
+    }
+
+    private func save() {
+        let success: Bool
+        if hasSymptoms {
+            let severity = (bloodOrFever || acuteInjury || pain) ? RecommendationSeverity.urgent : .medical
+            success = history.recordSafetyHold(reasonCode: "safety.health-check", severity: severity.rawValue, source: "health-check")
+        } else {
+            success = history.resolveSafetyHoldsAfterClearRecheck()
+        }
+        if success { dismiss() } else { saveFailed = true }
+    }
 }
 struct Card<Content: View>: View {
     @ViewBuilder var content: Content
