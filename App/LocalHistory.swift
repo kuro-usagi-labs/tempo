@@ -34,8 +34,41 @@ final class LocalHistory {
         save()
     }
 
-    func addSession(cycles: Int, terminalState: GuidedSessionState) { sessions.insert(LocalSession(id: UUID(), completedAt: .now, cycles: cycles, terminalState: terminalState.rawValue), at: 0); sessions = Array(sessions.prefix(100)); guard let data = try? JSONEncoder().encode(sessions) else { return }; UserDefaults.standard.set(data, forKey: sessionStorageKey) }
-    func deleteAll() { checkIns = []; sessions = []; UserDefaults.standard.removeObject(forKey: storageKey); UserDefaults.standard.removeObject(forKey: sessionStorageKey) }
-    private func load() { if let data = UserDefaults.standard.data(forKey: storageKey), let decoded = try? JSONDecoder().decode([LocalCheckIn].self, from: data) { checkIns = decoded }; if let data = UserDefaults.standard.data(forKey: sessionStorageKey), let decoded = try? JSONDecoder().decode([LocalSession].self, from: data) { sessions = decoded } }
-    private func save() { guard let data = try? JSONEncoder().encode(checkIns) else { return }; UserDefaults.standard.set(data, forKey: storageKey) }
+    func addSession(cycles: Int, terminalState: GuidedSessionState) {
+        sessions.insert(LocalSession(id: UUID(), completedAt: .now, cycles: cycles, terminalState: terminalState.rawValue), at: 0)
+        sessions = Array(sessions.prefix(100))
+        save(sessions, for: sessionStorageKey)
+    }
+
+    func deleteAll() {
+        checkIns = []
+        sessions = []
+        SecureLocalStore.remove(storageKey)
+        SecureLocalStore.remove(sessionStorageKey)
+        UserDefaults.standard.removeObject(forKey: storageKey)
+        UserDefaults.standard.removeObject(forKey: sessionStorageKey)
+    }
+
+    private func load() {
+        checkIns = load([LocalCheckIn].self, for: storageKey, defaultValue: [])
+        sessions = load([LocalSession].self, for: sessionStorageKey, defaultValue: [])
+    }
+
+    private func load<T: Codable>(_ type: T.Type, for key: String, defaultValue: T) -> T {
+        if let data = SecureLocalStore.data(for: key), let decoded = try? JSONDecoder().decode(T.self, from: data) { return decoded }
+        if let legacyData = UserDefaults.standard.data(forKey: key), let decoded = try? JSONDecoder().decode(T.self, from: legacyData) {
+            if SecureLocalStore.store(legacyData, for: key) { UserDefaults.standard.removeObject(forKey: key) }
+            return decoded
+        }
+        return defaultValue
+    }
+
+    private func save() {
+        save(checkIns, for: storageKey)
+    }
+
+    private func save<T: Encodable>(_ value: T, for key: String) {
+        guard let data = try? JSONEncoder().encode(value) else { return }
+        SecureLocalStore.store(data, for: key)
+    }
 }
