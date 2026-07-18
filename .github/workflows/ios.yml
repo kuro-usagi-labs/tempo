@@ -8,7 +8,7 @@ on:
 
 jobs:
   test-and-package:
-    runs-on: macos-latest
+    runs-on: macos-15
     permissions:
       contents: read
     steps:
@@ -22,11 +22,26 @@ jobs:
       - name: Enforce local-only networking policy
         run: |
           ! rg --glob '*.swift' 'URLSession|NWConnection|Alamofire' App Sources
-      - name: Compile app for simulator
-        run: xcodebuild build -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO
+      - name: Select an available iPhone simulator
+        id: simulator
+        run: |
+          simulator_id="$(xcrun simctl list devices available | awk -F '[()]' '/iPhone/{print $2; exit}')"
+          test -n "$simulator_id"
+          echo "id=$simulator_id" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$simulator_id" || true
+          xcrun simctl bootstatus "$simulator_id" -b
+      - name: Run iOS unit tests
+        run: |
+          xcodebuild test -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath "$PWD/build/DerivedData" CODE_SIGNING_ALLOWED=NO
+      - name: Install and launch simulator smoke test
+        run: |
+          app_path="build/DerivedData/Build/Products/Debug-iphonesimulator/Tempo.app"
+          test -d "$app_path"
+          xcrun simctl install '${{ steps.simulator.outputs.id }}' "$app_path"
+          xcrun simctl launch --terminate-running-process '${{ steps.simulator.outputs.id }}' labs.kurousagi.tempo
       - name: Build archive
-        run: xcodebuild archive -project Tempo.xcodeproj -scheme Tempo -configuration Release -destination 'generic/platform=iOS' -archivePath "$PWD/build/Tempo.xcarchive" -sdk iphoneos CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
-      - name: Create sideload-ready IPA artifact
+        run: xcodebuild archive -project Tempo.xcodeproj -scheme Tempo -configuration Release -destination 'generic/platform=iOS' -archivePath "$PWD/build/Tempo.xcarchive" -sdk iphoneos CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+      - name: Create re-sign-ready IPA artifact
         run: |
           set -euo pipefail
           app_path="build/Tempo.xcarchive/Products/Applications/Tempo.app"
@@ -37,9 +52,16 @@ jobs:
           /usr/libexec/PlistBuddy -c 'Print :CFBundlePackageType' "$app_path/Info.plist"
           mkdir -p build/Payload
           cp -R "$app_path" build/Payload/
-          (cd build && /usr/bin/zip -qry Tempo-sideload.ipa Payload)
+          (cd build && /usr/bin/zip -qry Tempo-resign-ready.ipa Payload)
+          /usr/bin/unzip -t build/Tempo-resign-ready.ipa
+          test "$(/usr/bin/unzip -Z1 build/Tempo-resign-ready.ipa | awk '/^Payload\/[^/]+\.app\/$/{count++} END{print count+0}')" -eq 1
+          /usr/bin/file "$app_path/Tempo" | /usr/bin/grep -q arm64
+          test "$(/usr/bin/stat -f '%Lp' "$app_path/Tempo")" = "755"
+          test -f "$app_path/Assets.car"
+          /usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$app_path/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleSupportedPlatforms:0' "$app_path/Info.plist" | /usr/bin/grep -q iPhoneOS
       - uses: actions/upload-artifact@v4
         with:
-          name: Tempo-sideload-ipa
-          path: build/Tempo-sideload.ipa
+          name: Tempo-resign-ready-ipa
+          path: build/Tempo-resign-ready.ipa
           if-no-files-found: error

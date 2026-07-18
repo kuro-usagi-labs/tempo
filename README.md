@@ -1,6 +1,6 @@
 # TEMPO — iOS Offline Sexual-Wellness Training Blueprint
 
-**Status:** Product & engineering blueprint 1.0  
+**Status:** Native iOS MVP implemented; safety-hardened sideload build
 **Platform:** iPhone, native SwiftUI  
 **Operating model:** fully local, no AI, no account, no internet required  
 **Working title:** TEMPO  
@@ -61,3 +61,9 @@ Start with:
 - Never lock users into sexual activity to preserve a streak.
 - Stop training when pain, unusual discharge, blood, fever, urinary burning, testicular pain, pelvic pain, or injury is reported.
 - All explicit training content is 18+ and hidden behind discreet UI.
+
+## Build artifact
+
+Every push runs deterministic domain tests, iOS simulator tests, a simulator launch smoke test, and a device archive build. GitHub Actions publishes `Tempo-resign-ready.ipa` inside the `Tempo-resign-ready-ipa` artifact.
+
+The IPA is intentionally ad-hoc signed only so a sideload tool can replace its signature. It is not directly installable until it is re-signed for the target device. The app requires iOS 17 or later.

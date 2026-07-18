@@ -58,3 +58,7 @@ MVP:
 ## Important distinction
 
 Sideloading does not remove the need for code signing. Every install must be signed with a valid provisioning configuration for the device and distribution method.
+
+## Repository CI artifact
+
+The repository workflow publishes `Tempo-resign-ready.ipa` in the `Tempo-resign-ready-ipa` artifact. It contains one `Payload/Tempo.app`, an ARM64 executable, compiled assets, and an ad-hoc signature. A sideload tool must replace that signature; the raw artifact is not directly installable. Extract the GitHub artifact ZIP first, then provide the contained IPA to the sideload tool. The current deployment target is iOS 17 or later.

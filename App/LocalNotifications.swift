@@ -3,9 +3,12 @@ import UserNotifications
 
 @MainActor
 enum LocalNotifications {
-    static func removeAll() { UNUserNotificationCenter.current().removeAllPendingNotificationRequests() }
+    static func removeAll() {
+        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+    }
     static func removeDailyPlan() { UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: (0..<7).map { "tempo.daily-plan.\($0)" } + ["tempo.daily-plan"]) }
-    static func requestAndScheduleDailyPlan(hour: Int = 9) async {
+    static func requestAndScheduleDailyPlan(hour: Int = 9, soundEnabled: Bool = false) async {
         let center = UNUserNotificationCenter.current()
         let granted = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
         guard granted else { return }
@@ -24,10 +27,31 @@ enum LocalNotifications {
             let content = UNMutableNotificationContent()
             content.title = "TEMPO"
             content.body = offset == 6 ? "Tinjauan mingguanmu sudah siap." : "Rencana hari ini sudah siap."
-            content.sound = .default
+            content.sound = soundEnabled ? .default : nil
             content.categoryIdentifier = "DAILY_PLAN"
             let request = UNNotificationRequest(identifier: "tempo.daily-plan.\(offset)", content: content, trigger: UNCalendarNotificationTrigger(dateMatching: components, repeats: false))
             try? await center.add(request)
         }
+    }
+
+    static func handle(actionIdentifier: String, soundEnabled: Bool) async {
+        guard actionIdentifier == "TEMPO_REMIND_LATER" else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "TEMPO"
+        content.body = "Rencana hari ini masih tersedia."
+        content.sound = soundEnabled ? .default : nil
+        content.categoryIdentifier = "DAILY_PLAN"
+        let calendar = Calendar.current
+        let proposed = Date.now.addingTimeInterval(3_600)
+        let fireDate: Date
+        if calendar.component(.hour, from: proposed) >= 22 || calendar.component(.hour, from: proposed) < 8 {
+            let nextDay = calendar.date(byAdding: .day, value: 1, to: .now) ?? proposed
+            fireDate = calendar.date(bySettingHour: 8, minute: 0, second: 0, of: nextDay) ?? proposed
+        } else {
+            fireDate = proposed
+        }
+        let delay = max(60, fireDate.timeIntervalSinceNow)
+        let request = UNNotificationRequest(identifier: "tempo.remind-later", content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: delay, repeats: false))
+        try? await UNUserNotificationCenter.current().add(request)
     }
 }

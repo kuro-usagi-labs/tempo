@@ -2,6 +2,8 @@
 
 Dokumentasi ini adalah rancangan lengkap aplikasi iPhone untuk membantu pengguna dewasa melatih kesadaran gairah, menjalankan teknik start–stop secara terstruktur, mengurangi kebiasaan terburu-buru, serta membangun rutinitas olahraga dan pemulihan yang lebih sehat.
 
+Implementasi native SwiftUI sudah tersedia di repository ini. Setiap push menjalankan unit test domain, test target iOS, smoke test peluncuran simulator, archive perangkat, dan pemeriksaan struktur IPA.
+
 ## Konsep utamanya
 
 TEMPO **tidak menggunakan AI**, tidak membutuhkan akun, dan tidak membutuhkan internet. Aplikasi terlihat pintar karena menggunakan:
@@ -59,3 +61,7 @@ Saat pengguna menekan **“Aku lagi terangsang”**, aplikasi menanyakan intensi
 ## Batasan penting
 
 Aplikasi ini tidak boleh menjanjikan pengguna pasti sembuh atau pasti tahan lebih lama. Produk harus diposisikan sebagai aplikasi latihan dan wellness. Keluhan seperti nyeri, perih saat kencing, cairan tidak normal, darah, demam, atau perubahan fungsi seksual yang mendadak harus menghentikan latihan dan mengarahkan pengguna ke tenaga kesehatan.
+
+## Artifact untuk sideload
+
+GitHub Actions menghasilkan artifact `Tempo-resign-ready-ipa` yang berisi `Tempo-resign-ready.ipa`. IPA tersebut sengaja hanya memakai ad-hoc signature dan harus di-sign ulang oleh aplikasi sideload untuk perangkat tujuan. File mentahnya tidak dimaksudkan untuk dipasang langsung. Minimum sistem adalah iOS 17.

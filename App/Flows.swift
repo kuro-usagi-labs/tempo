@@ -5,27 +5,74 @@ import UniformTypeIdentifiers
 struct UrgeCheckInView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(LocalHistory.self) private var history
-    @State private var step = 0; @State private var intensity = 5; @State private var trigger: UrgeTrigger = .desire; @State private var intent: UrgeIntent = .calm; @State private var hasSafetyFlag = false
+    @AppStorage("discreetTerminology") private var discreetTerminology = false
+    @State private var step = 0; @State private var intensity = 5; @State private var trigger: UrgeTrigger = .desire; @State private var intent: UrgeIntent = .calm
+    @State private var safetyAnswers = SafetyScreeningAnswers()
     @State private var result: Recommendation?
-    var body: some View { NavigationStack { VStack(spacing: 28) {
+    @State private var saveFailed = false
+    var body: some View { NavigationStack { ScrollView { VStack(spacing: 28) {
         HStack { ForEach(0..<4, id: \.self) { i in Capsule().fill(i <= step ? Color.indigo : Color.white.opacity(0.15)).frame(height: 5) } }.padding(.horizontal)
-        if let result { RecommendationView(result: result, dismiss: dismiss) } else { Group { switch step { case 0: intensityQuestion; case 1: triggerQuestion; case 2: intentQuestion; default: safetyQuestion } }.frame(maxHeight: .infinity); Button(step == 3 ? "Lihat rekomendasi" : "Lanjut") { advance() }.buttonStyle(.borderedProminent).controlSize(.large).padding() }
-    }.padding(.top).navigationTitle("Check-in cepat").toolbar { Button("Tutup") { dismiss() } } } }
-    private var intensityQuestion: some View { VStack(spacing: 20) { Text("Seberapa kuat intensitasnya?").font(.title2.bold()); Text("\(intensity)").font(.system(size: 76, weight: .bold, design: .rounded)).foregroundStyle(intensity >= 7 ? .orange : .indigo); Slider(value: Binding(get: { Double(intensity) }, set: { intensity = Int($0.rounded()) }), in: 1...10, step: 1).padding(.horizontal, 28); Text("Tidak ada jawaban yang salah. Cukup perhatikan apa yang terasa sekarang.").multilineTextAlignment(.center).foregroundStyle(.secondary).padding(.horizontal) } }
-    private var triggerQuestion: some View { ChoiceQuestion(title: "Apa konteksnya sekarang?", selection: $trigger, labels: [.init(.desire, "Gairah seksual"), .init(.boredom, "Bosan"), .init(.stress, "Stres"), .init(.loneliness, "Kesepian"), .init(.sleep, "Sulit tidur")]) }
+        if let result { RecommendationView(result: result, dismiss: dismiss) } else { Group { switch step { case 0: intensityQuestion; case 1: triggerQuestion; case 2: intentQuestion; default: safetyQuestion } }; Button(step == 3 ? "Lihat rekomendasi" : "Lanjut") { advance() }.buttonStyle(.borderedProminent).controlSize(.large).padding() }
+    }.padding(.top) }.navigationTitle("Check-in cepat").toolbar { Button("Tutup") { dismiss() } }.alert("Data belum tersimpan", isPresented: $saveFailed) { Button("Coba lagi") {} } message: { Text("TEMPO tidak dapat menyimpan check-in dengan aman. Rekomendasi belum diterapkan.") } } }
+    private var intensityQuestion: some View { VStack(spacing: 20) { Text("Seberapa kuat intensitasnya?").font(.title2.bold()); Text("\(intensity)").font(.largeTitle.bold().monospacedDigit()).foregroundStyle(intensity >= 7 ? .orange : .indigo); Slider(value: Binding(get: { Double(intensity) }, set: { intensity = Int($0.rounded()) }), in: 1...10, step: 1).padding(.horizontal, 28).accessibilityLabel("Intensitas").accessibilityValue("\(intensity) dari 10"); Text("Tidak ada jawaban yang salah. Cukup perhatikan apa yang terasa sekarang.").multilineTextAlignment(.center).foregroundStyle(.secondary).padding(.horizontal) } }
+    private var triggerQuestion: some View { ChoiceQuestion(title: "Apa konteksnya sekarang?", selection: $trigger, labels: [.init(.desire, discreetTerminology ? "Dorongan fisik" : "Gairah seksual"), .init(.boredom, "Bosan"), .init(.stress, "Stres"), .init(.loneliness, "Kesepian"), .init(.sleep, "Sulit tidur")]) }
     private var intentQuestion: some View { ChoiceQuestion(title: "Apa yang kamu butuhkan?", selection: $intent, labels: [.init(.calm, "Menenangkan diri"), .init(.training, "Latihan kontrol"), .init(.privateSession, "Sesi pribadi")]) }
-    private var safetyQuestion: some View { VStack(spacing: 20) { Text("Ada nyeri, cedera, perih saat kencing, atau cairan tidak biasa?").font(.title2.bold()).multilineTextAlignment(.center); Toggle("Ya, ada keluhan", isOn: $hasSafetyFlag).padding().background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 16)); Text("Keluhan apa pun akan menghentikan latihan dan mengarahkanmu ke health check.").foregroundStyle(.secondary).multilineTextAlignment(.center) }.padding() }
-    private func advance() { if step < 3 { step += 1 } else { var c = DecisionContext(); c.programPhase = history.effectiveProgramPhase; c.urgeIntensity = intensity; c.trigger = trigger; c.intent = intent; c.pain = hasSafetyFlag; c.anxiety = history.baseline?.anxiety ?? 5; c.hoursSinceLastSession = history.hoursSinceLastSession; c.guidedSessionsLast7Days = history.guidedSessionsLast7Days; let recommendation = RuleEngine().evaluate(c); history.add(intensity: intensity, trigger: trigger, intent: intent, recommendation: recommendation); result = recommendation } }
+    private var safetyQuestion: some View { VStack(spacing: 20) { Text("Periksa tanda keselamatan").font(.title2.bold()).multilineTextAlignment(.center); SafetyScreeningFields(answers: $safetyAnswers).padding().background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 16)); Text("Keluhan akan menghentikan latihan dan mengarahkanmu ke panduan yang sesuai.").foregroundStyle(.secondary).multilineTextAlignment(.center) }.padding() }
+    private func advance() { if step < 3 { step += 1 } else { var c = DecisionContext(); c.programPhase = history.effectiveProgramPhase; c.urgeIntensity = intensity; c.trigger = trigger; c.intent = intent; safetyAnswers.apply(to: &c); c.anxiety = Int((history.currentAnxiety ?? 5).rounded()); c.hoursSinceLastSession = history.hoursSinceLastSession; c.guidedSessionsLast7Days = history.guidedSessionsLast7Days; let recommendation = RuleEngine().evaluate(c); if history.add(intensity: intensity, trigger: trigger, intent: intent, recommendation: recommendation) { result = recommendation } else { saveFailed = true } } }
 }
 
 struct ChoiceOption<T: Hashable>: Identifiable { let value: T; let title: String; var id: T { value }; init(_ value: T, _ title: String) { self.value = value; self.title = title } }
 struct ChoiceQuestion<T: Hashable>: View { let title: String; @Binding var selection: T; let labels: [ChoiceOption<T>]; var body: some View { VStack(alignment: .leading, spacing: 14) { Text(title).font(.title2.bold()).padding(.bottom, 12); ForEach(labels) { item in Button { selection = item.value } label: { HStack { Text(item.title); Spacer(); if selection == item.value { Image(systemName: "checkmark.circle.fill") } }.padding().background(selection == item.value ? Color.indigo.opacity(0.6) : Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 16)) } } }.padding() } }
 
-struct RecommendationView: View { let result: Recommendation; let dismiss: DismissAction; @State private var showAction = false; var body: some View { VStack(spacing: 18) { Image(systemName: result.blocksGuidedTraining ? "cross.case.fill" : "sparkles").font(.system(size: 52)).foregroundStyle(result.blocksGuidedTraining ? .red : .cyan); Text(title).font(.title.bold()).multilineTextAlignment(.center); Text(result.message).foregroundStyle(.secondary).multilineTextAlignment(.center); Text("Mengapa rekomendasi ini?").font(.headline); Text("TEMPO memeriksa keselamatan, pemulihan, intensitas, dan tujuanmu sebelum memberi saran.").font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center); Button(primaryTitle) { if hasDirectAction { showAction = true } else { dismiss() } }.buttonStyle(.borderedProminent); Button("Tutup") { dismiss() }.foregroundStyle(.secondary) }.padding().sheet(isPresented: $showAction) { actionDestination } }
+struct RecommendationView: View {
+    let result: Recommendation
+    let dismiss: DismissAction
+    @State private var showAction = false
+    @State private var alternativeAction: RecommendedAction?
+    var body: some View {
+        VStack(spacing: 18) {
+            Image(systemName: result.blocksGuidedTraining ? "cross.case.fill" : "sparkles").font(.system(.largeTitle)).foregroundStyle(result.blocksGuidedTraining ? .red : .cyan)
+            Text(title).font(.title.bold()).multilineTextAlignment(.center)
+            Text(result.message).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Text("Mengapa rekomendasi ini?").font(.headline)
+            Text("TEMPO memeriksa keselamatan, pemulihan, intensitas, dan tujuanmu sebelum memberi saran.").font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Button(primaryTitle) { alternativeAction = nil; showAction = true }.buttonStyle(.borderedProminent).controlSize(.large)
+            if !result.reasonCode.hasPrefix("safety.") {
+                Menu("Pilihan aman lainnya") {
+                    Button("Napas lima menit") { alternativeAction = .urgeSurf; showAction = true }
+                    Button("Baca materi singkat") { alternativeAction = .education; showAction = true }
+                    if result.action != .privateSession { Button("Panduan sesi pribadi") { alternativeAction = .privateSession; showAction = true } }
+                }
+            }
+            Button("Tutup") { dismiss() }.foregroundStyle(.secondary).frame(minHeight: 44)
+        }
+        .padding()
+        .sheet(isPresented: $showAction) { actionDestination }
+    }
     private var title: String { switch result.action { case .healthCheck: "Hentikan latihan dulu"; case .recovery: "Waktunya pemulihan"; case .regulate, .urgeSurf: "Mari tenangkan ritme"; case .guidedSession: "Kamu siap berlatih"; case .privateSession: "Tetap pelan dan aman"; default: "Langkah kecil untuk hari ini" } }
-    private var primaryTitle: String { switch result.action { case .healthCheck: "Buka health check"; case .recovery, .regulate, .urgeSurf: "Mulai napas terpandu"; case .guidedSession: "Mulai guided session"; default: "Selesai" } }
-    private var hasDirectAction: Bool { [.healthCheck, .recovery, .regulate, .urgeSurf, .guidedSession].contains(result.action) }
-    @ViewBuilder private var actionDestination: some View { switch result.action { case .healthCheck: HealthCheckView(); case .guidedSession: NavigationStack { GuidedSessionView() }; default: NavigationStack { BreathingView(title: "Napas pemulihan", duration: 300).toolbar { Button("Tutup") { showAction = false } } } } }
+    private var primaryTitle: String { switch result.action { case .healthCheck: "Buka health check"; case .recovery, .regulate, .urgeSurf: "Mulai napas terpandu"; case .guidedSession: "Mulai guided session"; case .privateSession: "Buka panduan aman"; case .education: "Baca materi singkat"; default: "Buka langkah berikutnya" } }
+    @ViewBuilder private var actionDestination: some View {
+        switch alternativeAction ?? result.action {
+        case .healthCheck: HealthCheckView()
+        case .guidedSession: NavigationStack { GuidedSessionView() }
+        case .privateSession: NavigationStack { PrivateSessionGuidanceView() }
+        case .education: NavigationStack { LessonView(title: "Jeda sebelum memilih", body: "Dorongan dapat berubah jika diberi sedikit waktu. Perhatikan apakah konteksnya adalah keinginan, bosan, stres, kesepian, atau sulit tidur; pilih tindakan yang paling sesuai tanpa menghakimi diri.").toolbar { Button("Tutup") { showAction = false } } }
+        default: NavigationStack { BreathingView(title: "Napas pemulihan", duration: 300).toolbar { Button("Tutup") { showAction = false } } }
+        }
+    }
+}
+
+struct PrivateSessionGuidanceView: View {
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Label("Pilihan pribadi yang aman", systemImage: "hand.raised.fill").font(.title2.bold()).foregroundStyle(.indigo)
+                Text("Mulai tanpa terburu-buru, berhenti bila ada nyeri atau iritasi, dan jangan mengejar durasi tertentu.")
+                Text("Jika intensitas meningkat cepat, hands off dan beri waktu sampai tubuh turun. Jangan langsung mengulang setelah tubuh terasa lelah atau tidak nyaman.").foregroundStyle(.secondary)
+                Text("Pilihan ini tidak dihitung sebagai guided session dan tidak membuka safety hold atau batas pemulihan.").font(.footnote).foregroundStyle(.secondary)
+            }.padding()
+        }.navigationTitle("Panduan privat").navigationBarTitleDisplayMode(.inline)
+    }
 }
 
 struct TrainingView: View {
@@ -39,9 +86,9 @@ struct TrainingView: View {
                             Label("Guided session dijeda · periksa gejala", systemImage: "cross.case.fill").foregroundStyle(.red)
                         }
                         Text("Safety hold aktif sejak \(hold.createdAt.formatted(date: .abbreviated, time: .omitted)). Tidak dapat dilewati.").font(.caption).foregroundStyle(.secondary)
-                    } else if history.baseline == nil {
+                    } else if history.guidedEligibility.reason == .baselineRequired {
                         Label("Lengkapi baseline dari tab Hari ini", systemImage: "checklist").foregroundStyle(.orange)
-                    } else if (history.hoursSinceLastSession ?? .infinity) <= 24 || history.guidedSessionsLast7Days >= 3 {
+                    } else if !history.guidedEligibility.isAllowed {
                         Label("Guided session dijeda untuk pemulihan", systemImage: "bed.double.fill").foregroundStyle(.orange)
                     } else {
                         NavigationLink { GuidedSessionView() } label: {
@@ -56,15 +103,31 @@ struct TrainingView: View {
                     }
                 }
                 Section("Gerak") {
-                    NavigationLink { ExerciseDetailView(kind: .walk) } label: {
-                        Label("Jalan santai · 20 menit", systemImage: "figure.walk")
-                    }
-                    NavigationLink { ExerciseDetailView(kind: .strength) } label: {
-                        Label("Kekuatan pemula", systemImage: "figure.strengthtraining.traditional")
+                    if history.activeSafetyHold?.severity == RecommendationSeverity.urgent.rawValue || history.baseline?.hasExerciseRestriction == true {
+                        Label("Gerak dijeda sampai kondisi dinilai aman", systemImage: "cross.case.fill").foregroundStyle(.orange)
+                    } else {
+                        NavigationLink { ExerciseDetailView(kind: .walk) } label: {
+                            Label("Jalan santai · 20 menit", systemImage: "figure.walk")
+                        }
+                        NavigationLink { ExerciseDetailView(kind: .strength) } label: {
+                            Label("Kekuatan pemula", systemImage: "figure.strengthtraining.traditional")
+                        }
                     }
                 }
             }.navigationTitle("Latihan")
         }
+    }
+}
+
+struct GuidedEligibilityBlockedView: View {
+    let eligibility: GuidedEligibility
+    var body: some View {
+        ContentUnavailableView {
+            Label("Guided session belum tersedia", systemImage: eligibility.reason == .safetyHold ? "cross.case.fill" : "bed.double.fill")
+        } description: {
+            Text(eligibility.message)
+        }
+        .navigationTitle("Pemulihan")
     }
 }
 
@@ -73,6 +136,9 @@ struct ExerciseDetailView: View {
     let kind: Kind
     @Environment(LocalHistory.self) private var history
     @State private var completed = false
+    @State private var perceivedDifficulty = 3
+    @State private var painReported = false
+    @State private var saveFailed = false
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -85,27 +151,41 @@ struct ExerciseDetailView: View {
                         Text("• Wall atau incline push-up: 2 × 6–10\n• Chair squat: 2 × 8–12\n• Glute bridge: 2 × 8–12\n• Bird dog: 2 × 6 per sisi\n• Calf raise: 2 × 10–15")
                     } }
                 }
+                valueControl
+                Toggle("Ada nyeri tajam, pusing, nyeri dada, atau sesak tidak biasa", isOn: $painReported)
+                    .tint(.red)
                 Button(completed ? "Aktivitas selesai" : "Tandai selesai") {
                     guard !completed else { return }
-                    history.addExercise(kind: kind == .walk ? "Jalan santai" : "Kekuatan pemula", durationMinutes: kind == .walk ? 20 : 15)
-                    completed = true
+                    if painReported, !history.recordSafetyHold(reasonCode: "safety.exercise-symptom", severity: RecommendationSeverity.urgent.rawValue, source: "exercise") { saveFailed = true; return }
+                    if history.addExercise(kind: kind == .walk ? "Jalan santai" : "Kekuatan pemula", durationMinutes: kind == .walk ? 20 : 15, perceivedDifficulty: perceivedDifficulty, painReported: painReported) { completed = true } else { saveFailed = true }
                 }
                     .buttonStyle(.borderedProminent).controlSize(.large).disabled(completed)
                 Text("Gerak mendukung kesehatan umum, suasana hati, tidur, dan pengelolaan stres. Ini bukan pengobatan untuk kondisi seksual.").font(.footnote).foregroundStyle(.secondary)
             }.padding()
         }.navigationTitle("Aktivitas").navigationBarTitleDisplayMode(.inline)
+            .alert("Aktivitas belum tersimpan", isPresented: $saveFailed) { Button("Coba lagi") {} } message: { Text("TEMPO tidak dapat menyimpan catatan aktivitas dengan aman.") }
+    }
+
+    private var valueControl: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack { Text("Tingkat kesulitan").font(.headline); Spacer(); Text("\(perceivedDifficulty)/10").monospacedDigit() }
+            Slider(value: Binding(get: { Double(perceivedDifficulty) }, set: { perceivedDifficulty = Int($0.rounded()) }), in: 1...10, step: 1)
+                .accessibilityLabel("Tingkat kesulitan aktivitas").accessibilityValue("\(perceivedDifficulty) dari 10")
+        }
     }
 }
 
 struct GuidedSessionView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @Environment(LocalHistory.self) private var history
     @State private var machine = GuidedSessionMachine()
     @State private var arousal = 3
     @State private var anxiety = 3
-    @State private var safetyConcern = false
+    @State private var safetyAnswers = SafetyScreeningAnswers()
     @State private var hasPrivateTime = true
     @State private var willFollowPrompts = true
+    @State private var eligibilityMessage: String?
     @State private var sessionStartedAt: Date?
     @State private var prepareStartedAt: Date?
     @State private var recoveryStartedAt: Date?
@@ -121,22 +201,30 @@ struct GuidedSessionView: View {
     @State private var postTension = 3
     @State private var irritationAfter = false
     @State private var outcome = "Lebih tenang"
+    @State private var note = ""
+    @State private var saveFailed = false
+    @State private var arousalEvents: [LocalArousalEvent] = []
+    @State private var pauseCycles: [LocalPauseCycle] = []
+    @State private var pauseStartedOffset: Int?
+    @State private var pauseStartedLevel: Int?
+    @State private var pauseWasLate = false
+    @AccessibilityFocusState private var recoveryFocused: Bool
     @AppStorage("hapticsEnabled") private var hapticsEnabled = true
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     private let preparationMinimum = 90
     private let recoveryMinimum = 30
-    private let maximumSessionDuration = 1_200
 
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 22) {
-                if !showPostCheck {
+                if !showPostCheck && eligibilityMessage == nil {
                     Text(stateTitle).font(.title.bold()).multilineTextAlignment(.center)
                     Text(stateMessage).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 }
 
                 Group {
-                    if showPostCheck { postCheckContent }
+                    if let eligibilityMessage { eligibilityBlockedContent(eligibilityMessage) }
+                    else if showPostCheck { postCheckContent }
                     else if machine.state == .precheck { precheckContent }
                     else if machine.state == .prepare { prepareContent }
                     else if [.activeLow, .activeRising, .warning].contains(machine.state) { arousalControls }
@@ -157,35 +245,40 @@ struct GuidedSessionView: View {
         }
         .background(machine.state == .pausedRecovery ? Color.red.opacity(0.12) : Color.black)
         .navigationBarBackButtonHidden(true)
-        .onAppear { if history.activeSafetyHold != nil { machine.abortForSafety() } }
+        .onAppear { configureEligibility() }
         .onReceive(timer) { now in updateTimes(now: now) }
         .onChange(of: arousal) { _, newValue in handleArousalChange(newValue) }
         .onChange(of: machine.state) { _, newState in handleStateChange(newState) }
+        .onChange(of: scenePhase) { _, phase in handleScenePhase(phase) }
         .confirmationDialog("Bagaimana ingin mengakhiri sesi?", isPresented: $showEndOptions, titleVisibility: .visible) {
             Button("Selesaikan dan isi refleksi") { machine.complete() }
             Button("Batalkan sesi", role: .destructive) { cancelAndDismiss() }
             Button("Lanjutkan sesi", role: .cancel) {}
         }
+        .alert("Sesi belum tersimpan", isPresented: $saveFailed) { Button("Coba lagi") {} } message: { Text("Data belum dapat disimpan dengan aman. Jangan mulai sesi baru sebelum penyimpanan berhasil.") }
     }
 
     private var precheckContent: some View {
         VStack(spacing: 18) {
             valueControl(title: "Kecemasan saat ini", value: $anxiety)
             valueControl(title: "Intensitas saat ini", value: $arousal)
-            Toggle("Saya mengalami nyeri atau iritasi", isOn: $safetyConcern)
+            SafetyScreeningFields(answers: $safetyAnswers)
+                .padding().background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 16))
             Toggle("Saya punya waktu dan ruang privat", isOn: $hasPrivateTime)
             Toggle("Saya bersedia mengikuti instruksi berhenti", isOn: $willFollowPrompts)
-            Button(safetyConcern ? "Hentikan dan lihat panduan" : "Mulai persiapan") {
-                if safetyConcern { machine.abortForSafety() }
+            Button(safetyAnswers.hasAny ? "Hentikan dan lihat panduan" : "Mulai persiapan") {
+                guard history.guidedEligibility.isAllowed else { eligibilityMessage = history.guidedEligibility.message; return }
+                if safetyAnswers.hasAny { machine.abortForSafety() }
                 else {
                     sessionStartedAt = .now
                     prepareStartedAt = .now
                     postAnxiety = anxiety
+                    arousalEvents.append(LocalArousalEvent(timestampOffset: 0, level: arousal, eventType: "precheck"))
                     machine.start()
                 }
             }
             .buttonStyle(.borderedProminent).controlSize(.large)
-            .disabled(!safetyConcern && (!hasPrivateTime || !willFollowPrompts))
+            .disabled(!safetyAnswers.hasAny && (!hasPrivateTime || !willFollowPrompts))
         }
     }
 
@@ -209,6 +302,7 @@ struct GuidedSessionView: View {
                 .foregroundStyle(arousal >= 7 ? .red : arousal >= 6 ? .orange : .indigo)
             Slider(value: Binding(get: { Double(arousal) }, set: { arousal = Int($0.rounded()) }), in: 1...10, step: 1)
                 .accessibilityLabel("Intensitas saat ini")
+                .accessibilityValue("\(arousal) dari 10, \(arousalMeaning)")
             HStack {
                 Button("Stabil") { arousal = max(1, arousal - 1) }.buttonStyle(.bordered)
                 Button("Naik") { arousal = min(10, arousal + 1) }.buttonStyle(.bordered)
@@ -227,9 +321,10 @@ struct GuidedSessionView: View {
             BreathingOrbView()
             Text(recoveryElapsed >= recoveryMinimum ? "Nilai ulang intensitasmu" : "Pemulihan · \(recoveryMinimum - recoveryElapsed) dtk")
                 .font(.headline.monospacedDigit())
+                .accessibilityFocused($recoveryFocused)
             valueControl(title: "Intensitas sekarang", value: $arousal)
             Button("Lanjut setelah intensitas 4 atau lebih rendah") {
-                machine.recovered(level: arousal, elapsedSeconds: recoveryElapsed)
+                recoverAndContinue()
             }
             .buttonStyle(.borderedProminent)
             .disabled(recoveryElapsed < recoveryMinimum || arousal > 4)
@@ -272,6 +367,8 @@ struct GuidedSessionView: View {
                 ForEach(["Lebih tenang", "Sama saja", "Lelah", "Tidak nyaman"], id: \.self) { Text($0).tag($0) }
             }
             .pickerStyle(.menu)
+            TextField("Catatan privat (opsional)", text: $note, axis: .vertical)
+                .lineLimit(2...5)
             Button("Simpan dan selesai") { savePostCheckAndDismiss() }
                 .buttonStyle(.borderedProminent).controlSize(.large)
         }
@@ -281,6 +378,8 @@ struct GuidedSessionView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack { Text(title).font(.headline); Spacer(); Text("\(value.wrappedValue)/10").monospacedDigit().foregroundStyle(.secondary) }
             Slider(value: Binding(get: { Double(value.wrappedValue) }, set: { value.wrappedValue = Int($0.rounded()) }), in: 1...10, step: 1)
+                .accessibilityLabel(title)
+                .accessibilityValue("\(value.wrappedValue) dari 10")
         }
         .padding().background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 16))
     }
@@ -294,6 +393,17 @@ struct GuidedSessionView: View {
     private var stateTitle: String { switch machine.state { case .precheck: "Periksa dulu"; case .prepare: "Tenangkan tubuh"; case .activeLow, .activeRising: "Tetap sadar"; case .warning: "Berhenti sekarang"; case .pausedRecovery: "Biarkan intensitas turun"; case .resumeReady: "Kembali dalam rentang aman"; default: "" } }
     private var stateMessage: String { switch machine.state { case .prepare: "Persiapan pelan membantu tubuh tidak mengejar durasi."; case .pausedRecovery: "Hands off. Tarik napas dan nilai ulang setelah jeda minimum."; default: "TEMPO mendukung latihan terstruktur, bukan diagnosis medis." } }
     private var terminalMessage: String { switch machine.state { case .earlyCompletion: "Berakhir lebih cepat bukan kegagalan dan tidak perlu langsung diulang."; case .timeLimitReached: "Batas waktu tercapai. Beri tubuh waktu untuk pulih."; default: "Ini data yang berguna, bukan penilaian atas dirimu." } }
+    private var arousalMeaning: String { arousal >= history.adaptivePauseThreshold ? "berhenti sekarang" : arousal >= 6 ? "mulai naik" : "rentang rendah" }
+
+    private func eligibilityBlockedContent(_ message: String) -> some View {
+        VStack(spacing: 18) {
+            Image(systemName: history.guidedEligibility.reason == .safetyHold ? "cross.case.fill" : "bed.double.fill")
+                .font(.system(size: 54)).foregroundStyle(.orange)
+            Text("Guided session belum tersedia").font(.title2.bold()).multilineTextAlignment(.center)
+            Text(message).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Button("Tutup") { dismiss() }.buttonStyle(.borderedProminent)
+        }
+    }
 
     private func beginActive() {
         machine.beginActive()
@@ -305,24 +415,35 @@ struct GuidedSessionView: View {
     }
 
     private func beginRecovery(strong: Bool) {
-        if strong { machine.emergencyPause() } else { machine.pause() }
+        let didPause = strong ? machine.emergencyPause() : machine.pause()
+        guard didPause else { return }
         recoveryStartedAt = .now
         recoveryElapsed = 0
-        if strong { playStrongWarningOnce() }
+        beginPauseRecord(eventType: strong ? "almost-too-late" : "manual-pause", late: strong)
+        if strong {
+            playStrongWarningOnce()
+            UIAccessibility.post(notification: .announcement, argument: "Berhenti sekarang. Hands off. Bernapas.")
+        }
         else if hapticsEnabled { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
+        recoveryFocused = true
     }
 
     private func handleArousalChange(_ level: Int) {
         guard [.activeLow, .activeRising, .warning].contains(machine.state) else { return }
-        machine.rising(level: level, threshold: 7)
-        if level >= 7 {
+        arousalEvents.append(LocalArousalEvent(timestampOffset: totalElapsed, level: level, eventType: "level"))
+        arousalEvents = Array(arousalEvents.suffix(120))
+        let crossedThreshold = machine.rising(level: level, threshold: history.adaptivePauseThreshold)
+        if crossedThreshold {
             playStrongWarningOnce()
-            machine.pause()
             recoveryStartedAt = .now
             recoveryElapsed = 0
+            beginPauseRecord(eventType: "threshold", late: false)
+            recoveryFocused = true
+            UIAccessibility.post(notification: .announcement, argument: "Berhenti sekarang. Hands off. Bernapas.")
         } else if level == 6, !gentleWarningPlayed {
             gentleWarningPlayed = true
             if hapticsEnabled { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+            UIAccessibility.post(notification: .announcement, argument: "Mulai melambat. Lembutkan tubuh.")
         }
     }
 
@@ -331,10 +452,22 @@ struct GuidedSessionView: View {
     }
 
     private func updateTimes(now: Date) {
-        if let start = sessionStartedAt { totalElapsed = max(0, Int(now.timeIntervalSince(start))) }
-        if let start = prepareStartedAt { prepareElapsed = max(0, Int(now.timeIntervalSince(start))) }
-        if let start = recoveryStartedAt { recoveryElapsed = max(0, Int(now.timeIntervalSince(start))) }
-        if totalElapsed >= maximumSessionDuration && !isTerminal { machine.reachTimeLimit() }
+        if let start = sessionStartedAt { totalElapsed = max(totalElapsed, max(0, Int(now.timeIntervalSince(start)))) }
+        if let start = prepareStartedAt { prepareElapsed = max(prepareElapsed, max(0, Int(now.timeIntervalSince(start)))) }
+        if let start = recoveryStartedAt { recoveryElapsed = max(recoveryElapsed, max(0, Int(now.timeIntervalSince(start)))) }
+        machine.updateElapsed(totalSeconds: totalElapsed)
+    }
+
+    private func handleScenePhase(_ phase: ScenePhase) {
+        let now = Date.now
+        updateTimes(now: now)
+        guard phase != .active,
+              [.activeLow, .activeRising, .warning].contains(machine.state)
+        else { return }
+        machine.pause(reason: .interruption)
+        recoveryStartedAt = now
+        recoveryElapsed = 0
+        beginPauseRecord(eventType: "interruption", late: false)
     }
 
     private func playStrongWarningOnce() {
@@ -345,22 +478,50 @@ struct GuidedSessionView: View {
 
     private func saveImmediatelyIfNeeded(_ state: GuidedSessionState) {
         guard !resultSaved else { return }
-        history.addSession(cycles: machine.cycles, terminalState: state, durationSeconds: totalElapsed)
-        if state == .safetyAbort { _ = history.recordSafetyHold(reasonCode: "safety.guided-precheck", severity: RecommendationSeverity.medical.rawValue, source: "guided-session") }
-        resultSaved = true
+        if state == .safetyAbort {
+            guard history.recordSafetyHold(reasonCode: safetyAnswers.reasonCode, severity: safetyAnswers.severity.rawValue, source: "guided-session") else { saveFailed = true; return }
+        }
+        let saved = history.addSession(startedAt: sessionStartedAt, cycles: machine.cycles, terminalState: state, targetCycles: machine.maximumCycles, pauseThreshold: history.adaptivePauseThreshold, maximumDurationSeconds: machine.maximumDurationSeconds, preAnxiety: anxiety, durationSeconds: totalElapsed, lateStopOccurred: machine.lateStopOccurred, arousalEvents: arousalEvents, pauseCycles: pauseCycles)
+        if saved { resultSaved = true } else { saveFailed = true }
     }
 
     private func savePostCheckAndDismiss() {
         guard !resultSaved else { dismiss(); return }
-        history.addSession(cycles: machine.cycles, terminalState: machine.state, durationSeconds: totalElapsed, postAnxiety: postAnxiety, postTension: postTension, irritationAfter: irritationAfter, outcome: outcome)
-        resultSaved = true
-        dismiss()
+        let saved = history.addSession(startedAt: sessionStartedAt, cycles: machine.cycles, terminalState: machine.state, targetCycles: machine.maximumCycles, pauseThreshold: history.adaptivePauseThreshold, maximumDurationSeconds: machine.maximumDurationSeconds, preAnxiety: anxiety, durationSeconds: totalElapsed, lateStopOccurred: machine.lateStopOccurred, postAnxiety: postAnxiety, postTension: postTension, irritationAfter: irritationAfter, outcome: outcome, note: note.isEmpty ? nil : note, arousalEvents: arousalEvents, pauseCycles: pauseCycles)
+        if saved { resultSaved = true; dismiss() } else { saveFailed = true }
     }
 
     private func cancelAndDismiss() {
         machine.cancel()
         saveImmediatelyIfNeeded(.cancelled)
-        dismiss()
+        if resultSaved { dismiss() }
+    }
+
+    private func configureEligibility() {
+        let eligibility = history.guidedEligibility
+        guard eligibility.isAllowed else { eligibilityMessage = eligibility.message; return }
+        if machine.state == .precheck {
+            machine = GuidedSessionMachine(maximumCycles: history.targetCycles, maximumDurationSeconds: 1_200)
+        }
+    }
+
+    private func beginPauseRecord(eventType: String, late: Bool) {
+        pauseStartedOffset = totalElapsed
+        pauseStartedLevel = arousal
+        pauseWasLate = late
+        arousalEvents.append(LocalArousalEvent(timestampOffset: totalElapsed, level: arousal, eventType: eventType))
+    }
+
+    private func recoverAndContinue() {
+        let cyclesBefore = machine.cycles
+        machine.recovered(level: arousal, elapsedSeconds: recoveryElapsed)
+        guard machine.cycles > cyclesBefore else { return }
+        let start = pauseStartedOffset ?? max(0, totalElapsed - recoveryElapsed)
+        pauseCycles.append(LocalPauseCycle(index: machine.cycles, startOffset: start, endOffset: totalElapsed, arousalBefore: pauseStartedLevel ?? arousal, arousalAfter: arousal, lateStop: pauseWasLate, successful: true))
+        pauseStartedOffset = nil
+        pauseStartedLevel = nil
+        pauseWasLate = false
+        arousalEvents.append(LocalArousalEvent(timestampOffset: totalElapsed, level: arousal, eventType: "recovered"))
     }
 }
 
@@ -371,12 +532,15 @@ struct BreathingView: View {
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     init(title: String, duration: Int) { self.title = title; self.duration = duration; _remaining = State(initialValue: duration) }
     var body: some View {
-        VStack(spacing: 24) {
-            Text(title).font(.title.bold())
-            BreathingOrbView()
-            Text("\(remaining / 60):\(String(format: "%02d", remaining % 60))").font(.title.monospacedDigit())
-            Text("Tarik napas perlahan. Perhatikan sensasi tanpa harus bertindak.").foregroundStyle(.secondary).multilineTextAlignment(.center)
-        }.padding().onReceive(timer) { _ in if remaining > 0 { remaining -= 1 } }
+        ScrollView {
+            VStack(spacing: 24) {
+                Text(title).font(.title.bold())
+                BreathingOrbView()
+                Text("\(remaining / 60):\(String(format: "%02d", remaining % 60))").font(.title.monospacedDigit())
+                    .accessibilityLabel("Sisa waktu \(remaining / 60) menit \(remaining % 60) detik")
+                Text("Tarik napas perlahan. Perhatikan sensasi tanpa harus bertindak.").foregroundStyle(.secondary).multilineTextAlignment(.center)
+            }.frame(maxWidth: .infinity, minHeight: 520).padding()
+        }.onReceive(timer) { _ in if remaining > 0 { remaining -= 1 } }
     }
 }
 
@@ -406,15 +570,23 @@ struct ProgressView: View {
                         scoreRow("Kesadaran", value: history.scoreSnapshot.awareness, color: .cyan)
                         scoreRow("Kontrol", value: history.scoreSnapshot.control, color: .indigo)
                         scoreRow("Pemulihan", value: history.scoreSnapshot.recovery, color: .green)
+                        scoreRow("Ketenangan", value: history.scoreSnapshot.calm, color: .mint)
                         scoreRow("Konsistensi", value: history.scoreSnapshot.consistency, color: .orange)
                         Text("Skor merangkum kebiasaan dan kualitas jeda, bukan membandingkanmu dengan orang lain.").font(.caption).foregroundStyle(.secondary)
                     }
                     Section("Ringkasan privat") {
                         HStack { Text("Total check-in"); Spacer(); Text("\(history.checkIns.count)").monospacedDigit() }
                         if !history.checkIns.isEmpty { HStack { Text("Rata-rata intensitas"); Spacer(); Text(String(format: "%.1f", averageIntensity)).monospacedDigit() } }
-                        HStack { Text("Safety hold"); Spacer(); Text("\(history.checkIns.filter(\.blocksTraining).count)").monospacedDigit() }
+                        HStack { Text("Safety hold tercatat"); Spacer(); Text("\(history.safetyHoldCount)").monospacedDigit() }
                         HStack { Text("Guided session"); Spacer(); Text("\(history.sessions.count)").monospacedDigit() }
                         HStack { Text("Aktivitas gerak"); Spacer(); Text("\(history.exercises.count)").monospacedDigit() }
+                    }
+                    Section("Tren pribadi") {
+                        if let anxiety = history.currentAnxiety { HStack { Text("Kecemasan terbaru"); Spacer(); Text(String(format: "%.1f / 10", anxiety)).monospacedDigit() } }
+                        if let tension = history.currentTension { HStack { Text("Ketegangan terbaru"); Spacer(); Text(String(format: "%.1f / 10", tension)).monospacedDigit() } }
+                        HStack { Text("Fase program"); Spacer(); Text(phaseName) }
+                        HStack { Text("Tingkat kemandirian"); Spacer(); Text("\(history.independenceLevel) / 4").monospacedDigit() }
+                        Text("Nilai ini dibandingkan dengan riwayatmu sendiri dan tidak memakai tolok ukur orang lain.").font(.caption).foregroundStyle(.secondary)
                     }
                     Section("Aktivitas terbaru") {
                         ForEach(history.checkIns.prefix(10)) { entry in
@@ -436,6 +608,7 @@ struct ProgressView: View {
         }
     }
     private var averageIntensity: Double { Double(history.checkIns.map(\.intensity).reduce(0, +)) / Double(history.checkIns.count) }
+    private var phaseName: String { switch history.effectiveProgramPhase { case .assessmentRequired: "Baseline"; case .awareness: "Kesadaran"; case .basicControl: "Kontrol dasar"; case .stability: "Stabilitas"; case .transfer: "Transfer"; case .independence: "Mandiri"; case .safetyHold: "Pemulihan" } }
     private func scoreRow(_ title: String, value: Int, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack { Text(title); Spacer(); Text("\(value)").font(.headline.monospacedDigit()) }
@@ -445,43 +618,57 @@ struct ProgressView: View {
 }
 
 struct LearnView: View {
-    private let sections: [(String, [LessonItem])] = [
-        ("Memahami tubuh", [
-            .init("Kurva intensitas", "Gairah dan intensitas dapat naik maupun turun. Mengenali perubahan lebih awal memberi ruang untuk memilih jeda sebelum semuanya terasa mendesak."),
-            .init("Respons tubuh yang normal", "Respons fisik dapat berubah dari hari ke hari. Variasi bukan kegagalan dan tidak perlu dikoreksi dengan memaksa tubuh."),
-            .init("Pre-ejakulat bukan kegagalan", "Pre-ejakulat adalah respons tubuh yang dapat terjadi secara normal. TEMPO menilai kesadaran dan pilihan aman, bukan mengejar tubuh yang selalu sama."),
-            .init("Ereksi dapat berubah", "Kehilangan atau berkurangnya ereksi saat jeda bukan kegagalan. Jangan menambah stimulasi hanya untuk mempertahankan kondisi tertentu."),
-            .init("Durasi bukan nilai diri", "Durasi sesi tidak menentukan nilai, kedekatan, atau kemajuanmu. Keterampilan utama adalah mengenali sinyal dan merespons dengan aman.")
+    private let sections: [LessonSection] = [
+        .init("Dasar tubuh", lessons: [
+            .init("Pre-ejakulat bukan ejakulasi", "Pre-ejakulat adalah respons tubuh yang dapat terjadi secara normal dan bukan tanda sesi gagal. Catat perubahan tanpa mengejar atau mengoreksinya."),
+            .init("Intensitas berbentuk kurva", "Intensitas dapat naik, mendatar, lalu turun. Mengenali perubahan kecil lebih awal memberi ruang untuk memilih melambat atau berhenti."),
+            .init("Titik sulit dihentikan", "Ada fase ketika respons tubuh terasa jauh lebih sulit dihentikan. Tujuan latihan adalah mengenali tanda sebelum fase itu, bukan menguji seberapa dekat kamu bisa mendekat."),
+            .init("Mengapa ketegangan penting", "Rahang, perut, paha, bokong, dan area panggul sering menegang tanpa disadari. Melembutkan area tersebut membantu pengamatan tubuh dan tidak boleh dipaksakan."),
+            .init("Durasi bukan ukuran utama", "Durasi tidak menentukan nilai diri atau keberhasilan. TEMPO lebih menghargai jeda yang tepat, pemulihan, dan keputusan aman.")
         ]),
-        ("Keterampilan kesadaran", [
-            .init("Mengenali level awal", "Perhatikan napas, ketegangan rahang, perut, paha, dan bokong. Perubahan kecil sering muncul sebelum intensitas terasa tinggi."),
-            .init("Melambat di level enam", "Saat tubuh mulai meningkat, kurangi tempo dan tekanan. Biarkan napas melambat dan lepaskan ketegangan yang tidak perlu."),
-            .init("Berhenti di ambang batas", "Instruksi berhenti adalah bagian inti latihan. Hands off, bernapas, dan tunggu sampai intensitas benar-benar turun."),
-            .init("Hampir terlambat", "Jika terasa hampir terlambat, masuk ke jeda darurat tanpa menyalahkan diri. Informasi ini membantu penyesuaian sesi berikutnya."),
-            .init("Siklus bukan perlombaan", "Satu siklus yang tenang lebih berguna daripada banyak pengulangan yang dipaksakan. Batas maksimum melindungi pemulihan tubuh.")
+        .init("Keterampilan latihan", lessons: [
+            .init("Cara kerja start–stop", "Mulai pelan, nilai intensitas, lalu berhenti sesuai ambang. Setelah pemulihan minimum dan nilai turun, satu siklus dapat dilanjutkan dengan tenang."),
+            .init("Kapan harus melambat", "Level enam adalah sinyal awal untuk mengurangi tempo dan tekanan. Longgarkan tubuh sebelum peringatan berhenti muncul."),
+            .init("Menggunakan skala 1–10", "Gunakan angka sebagai bahasa praktis, bukan ujian presisi. Nilai yang konsisten menurut pengalamanmu sendiri lebih berguna daripada membandingkan dengan orang lain."),
+            .init("Napas saat pemulihan", "Biarkan embusan sedikit lebih panjang dan jangan menahan napas. Nilai ulang setelah sekurangnya 30 detik; lanjut hanya ketika intensitas empat atau lebih rendah."),
+            .init("Kurangi pola terburu-buru", "Mulai dengan sengaja, periksa ketegangan, dan ikuti prompt berhenti. Konsistensi kecil lebih berguna daripada sesi panjang yang dipaksakan."),
+            .init("Edging sangat lama bukan target", "Sesi yang terlalu lama dapat menambah kelelahan dan iritasi. TEMPO membatasi durasi dan tidak memberi poin tambahan untuk waktu yang lebih panjang."),
+            .init("Mengakhiri tanpa malu", "Sesi boleh berakhir lebih awal, karena pilihan, atau karena batas waktu. Catat kondisi tubuh dan ambil pemulihan tanpa langsung mencoba ulang.")
         ]),
-        ("Pemulihan dan kebiasaan", [
-            .init("Istirahat juga latihan", "Mematuhi hari pemulihan adalah bagian dari progres. Sesi tambahan tidak otomatis mempercepat perubahan."),
-            .init("Napas pemulihan", "Tarik napas perlahan dan biarkan embusan sedikit lebih panjang. Tujuannya memberi waktu untuk mengamati, bukan memaksa tubuh menjadi tenang."),
-            .init("Gerak ringan", "Jalan santai dan latihan kekuatan dasar dapat mendukung kesehatan umum, tidur, dan suasana hati. Ini bukan pengobatan kondisi seksual."),
-            .init("Tidur dan stres", "Kurang tidur dan stres dapat mengubah perhatian serta respons tubuh. Pada hari berat, rencana yang lebih ringan tetap bernilai."),
-            .init("Mengurangi kebiasaan terburu-buru", "Latih transisi yang sengaja: mulai pelan, periksa ketegangan, dan berhenti sesuai prompt. Perubahan kebiasaan dibangun melalui konsistensi, bukan tekanan.")
+        .init("Kebiasaan dan pikiran", lessons: [
+            .init("Stres, tidur, dan kecemasan", "Kurang tidur dan stres dapat mengubah perhatian serta respons tubuh. Pada hari berat, rencana yang lebih ringan tetap merupakan progres."),
+            .init("Reset stimulus tanpa menghakimi", "Jika stimulus yang sangat tinggi terasa menjadi kebiasaan, lakukan perubahan bertahap tanpa moral panic. Fokus pada pilihan, tempo, dan bagaimana tubuh merespons."),
+            .init("Bosan atau benar-benar ingin", "Dorongan karena bosan, kesepian, atau stres mungkin lebih cocok direspons dengan napas, berjalan, atau aktivitas lain. Check-in membantu memberi jeda sebelum memilih."),
+            .init("Jebakan terus menguji", "Mengulang sesi untuk membuktikan hasil dapat menambah tekanan dan iritasi. Satu data yang kurang nyaman tidak perlu segera diperbaiki dengan tes baru."),
+            .init("Hindari obsesi streak", "Konsistensi bukan berarti tidak pernah melewatkan hari. Rencana boleh direduksi, dan hari pemulihan juga dihitung sebagai kepatuhan.")
         ]),
-        ("Keselamatan dan bantuan", [
-            .init("Kapan latihan harus dihentikan", "Hentikan latihan jika ada nyeri, perdarahan, demam, cedera akut, perih saat kencing, atau cairan tidak biasa."),
-            .init("Mencari tenaga kesehatan", "Keluhan menetap atau perubahan mendadak layak dibicarakan dengan dokter atau tenaga kesehatan yang sesuai. TEMPO tidak membuat diagnosis."),
-            .init("Tanda yang membutuhkan bantuan segera", "Nyeri berat, perdarahan banyak, pingsan, demam tinggi, atau cedera berat memerlukan pertolongan segera sesuai layanan setempat."),
-            .init("Iritasi dan pemulihan", "Iritasi ringan tetap merupakan alasan untuk berhenti dan memberi waktu pemulihan. Lanjut hanya setelah pemeriksaan ulang bebas gejala."),
-            .init("Privasi dan catatan lokal", "Jawaban dan riwayat TEMPO disimpan pada perangkat. Kamu dapat mengunci aplikasi dan menghapus seluruh data dari Pengaturan.")
+        .init("Relasi", lessons: [
+            .init("Menjelaskan kepada pasangan", "Gunakan bahasa sederhana tentang tekanan, jeda, dan apa yang membantu. Kamu tidak wajib membagikan angka atau catatan privat dari aplikasi."),
+            .init("Sepakati sinyal jeda", "Pilih kata atau isyarat yang mudah dikenali dan dihormati tanpa perdebatan. Jeda adalah keputusan bersama untuk menjaga kenyamanan, bukan tanda kegagalan."),
+            .init("Kedekatan di luar penetrasi", "Kedekatan tidak harus berpusat pada penetrasi atau durasi. Ruang tanpa target dapat mengurangi tekanan performa dan membantu komunikasi."),
+            .init("Lepaskan tuntutan performa", "Respons tubuh dapat berubah dari hari ke hari. Fokus pada kenyamanan, komunikasi, dan persetujuan daripada hasil yang harus selalu sama.")
+        ]),
+        .init("Kesehatan dan keselamatan", lessons: [
+            .init("Tanda yang perlu dinilai", "Hentikan latihan bila ada nyeri, darah, demam, cedera akut, perih saat kencing, atau cairan tidak biasa. Kondisi berat atau memburuk memerlukan bantuan segera sesuai layanan setempat."),
+            .init("Hati-hati dengan produk kebas", "Produk kebas dapat mengurangi sensasi dan menyamarkan tanda iritasi. Jangan mengandalkannya tanpa arahan tenaga kesehatan yang memahami kondisi dan risikonya."),
+            .init("Obat resep adalah keputusan klinis", "TEMPO tidak merekomendasikan atau mengatur obat. Manfaat, interaksi, dan efek samping perlu dibahas dengan dokter atau tenaga kesehatan yang berwenang."),
+            .init("Kapan latihan mandiri tidak cukup", "Cari penilaian bila perubahan muncul mendadak, menetap, mengganggu, atau disertai gejala lain. Aplikasi tidak dapat membuat diagnosis atau menggantikan pemeriksaan.")
+        ]),
+        .init("Gerak dan pemulihan", lessons: [
+            .init("Rencana jalan pemula", "Mulai dengan 10–15 menit jika belum aktif, lalu tambah perlahan ketika terasa nyaman. Berhenti untuk nyeri tajam, pusing, nyeri dada, atau sesak yang tidak biasa."),
+            .init("Progres jogging", "Setelah jalan terasa nyaman, coba satu menit jogging ringan diselingi dua menit berjalan. Tingkatkan waktu bertahap, bukan sekaligus."),
+            .init("Kekuatan tanpa alat", "Wall push-up, chair squat, glute bridge, bird dog, dan calf raise dapat membentuk rangkaian pemula. Tambah repetisi sebelum menambah set."),
+            .init("Checklist pemulihan tidur", "Perhatikan jam tidur, waktu bangun, kafein malam, dan ketegangan sebelum tidur. Satu malam buruk adalah konteks untuk meringankan rencana, bukan kegagalan."),
+            .init("Reset mingguan", "Tinjau apa yang membantu, apa yang terlewat, dan bagaimana tubuh pulih. Pilih satu penyesuaian kecil; jangan menumpuk tugas sebagai hukuman.")
         ])
     ]
 
     var body: some View {
         NavigationStack {
             List {
-                ForEach(sections, id: \.0) { section in
-                    Section(section.0) {
-                        ForEach(section.1) { lesson in
+                ForEach(sections) { section in
+                    Section(section.title) {
+                        ForEach(section.lessons) { lesson in
                             NavigationLink(lesson.title) { LessonView(title: lesson.title, body: lesson.body) }
                         }
                     }
@@ -489,6 +676,13 @@ struct LearnView: View {
             }.navigationTitle("Belajar")
         }
     }
+}
+
+private struct LessonSection: Identifiable {
+    let id = UUID()
+    let title: String
+    let lessons: [LessonItem]
+    init(_ title: String, lessons: [LessonItem]) { self.title = title; self.lessons = lessons }
 }
 
 private struct LessonItem: Identifiable {
@@ -509,8 +703,8 @@ struct SettingsView: View {
     @Environment(LocalHistory.self) private var history
     @AppStorage("discreetTerminology") private var discreet = false
     @AppStorage("hapticsEnabled") private var haptics = true
-    @AppStorage("privacyCoverEnabled") private var privacyCoverEnabled = true
     @AppStorage("biometricLockEnabled") private var biometricLockEnabled = false
+    @AppStorage("notificationSoundsEnabled") private var notificationSoundsEnabled = false
     @State private var showDeletionConfirmation = false
     @State private var showExportPrompt = false
     @State private var showExporter = false
@@ -518,6 +712,7 @@ struct SettingsView: View {
     @State private var exportDocument = TempoExportDocument()
     @State private var exportError = false
     @State private var biometricError = false
+    @State private var deletionError = false
     @AppStorage("dailyPlanRemindersEnabled") private var remindersEnabled = false
     @AppStorage("dailyPlanReminderHour") private var reminderHour = 9
     @AppStorage("onboardingCompleted") private var onboardingCompleted = false
@@ -526,21 +721,26 @@ struct SettingsView: View {
             Form {
                 Section("Privasi") {
                     Toggle("Terminologi privat", isOn: $discreet)
-                    Toggle("Tutup konten saat aplikasi di latar belakang", isOn: $privacyCoverEnabled)
+                    Label("Konten selalu disamarkan saat aplikasi di latar belakang", systemImage: "eye.slash.fill")
+                        .font(.subheadline).foregroundStyle(.secondary)
                     Toggle("Minta Face ID / kode saat membuka aplikasi", isOn: biometricBinding)
                     Button("Export data terenkripsi") { exportPassword = ""; showExportPrompt = true }
                     Button("Hapus semua data", role: .destructive) { showDeletionConfirmation = true }
                 }
                 Section("Preferensi") {
                     Toggle("Haptics", isOn: $haptics)
+                    Toggle("Suara notifikasi", isOn: $notificationSoundsEnabled)
+                        .onChange(of: notificationSoundsEnabled) { _, enabled in
+                            if remindersEnabled { Task { await LocalNotifications.requestAndScheduleDailyPlan(hour: reminderHour, soundEnabled: enabled) } }
+                        }
                     Toggle("Pengingat rencana harian", isOn: $remindersEnabled)
                         .onChange(of: remindersEnabled) { _, enabled in
-                            if enabled { Task { await LocalNotifications.requestAndScheduleDailyPlan(hour: reminderHour) } }
+                            if enabled { Task { await LocalNotifications.requestAndScheduleDailyPlan(hour: reminderHour, soundEnabled: notificationSoundsEnabled) } }
                             else { LocalNotifications.removeDailyPlan() }
                         }
                     if remindersEnabled {
                         Stepper("Waktu pengingat: \(String(format: "%02d:00", reminderHour))", value: $reminderHour, in: 8...21)
-                            .onChange(of: reminderHour) { _, hour in Task { await LocalNotifications.requestAndScheduleDailyPlan(hour: hour) } }
+                            .onChange(of: reminderHour) { _, hour in Task { await LocalNotifications.requestAndScheduleDailyPlan(hour: hour, soundEnabled: notificationSoundsEnabled) } }
                     }
                     NavigationLink("Tentang keselamatan") { Text("TEMPO bukan alat diagnosis atau layanan darurat. Nyeri, perdarahan, demam, perih saat kencing, atau cairan tidak biasa memerlukan penilaian profesional.").padding() }
                     NavigationLink("Tentang rule engine") { RuleEngineInfoView() }
@@ -549,17 +749,16 @@ struct SettingsView: View {
         }
         .confirmationDialog("Hapus seluruh data lokal?", isPresented: $showDeletionConfirmation, titleVisibility: .visible) {
             Button("Hapus semua data", role: .destructive) {
+                guard history.deleteAll() else { deletionError = true; return }
+                LocalNotifications.removeAll()
+                if let domain = Bundle.main.bundleIdentifier { UserDefaults.standard.removePersistentDomain(forName: domain) }
                 discreet = false
                 haptics = true
-                privacyCoverEnabled = true
                 biometricLockEnabled = false
+                notificationSoundsEnabled = false
                 remindersEnabled = false
                 reminderHour = 9
-                UserDefaults.standard.removeObject(forKey: "baselineCompleted")
                 onboardingCompleted = false
-                UserDefaults.standard.removeObject(forKey: "privacyLockEnabled")
-                LocalNotifications.removeAll()
-                history.deleteAll()
             }
         } message: { Text("Tindakan ini menghapus preferensi dan data lokal yang tersimpan. Ini tidak dapat dibatalkan.") }
         .alert("Lindungi file export", isPresented: $showExportPrompt) {
@@ -569,6 +768,7 @@ struct SettingsView: View {
         } message: { Text("Password tidak disimpan oleh TEMPO. Simpan password ini sendiri karena file tidak dapat dibuka tanpanya.") }
         .alert("Export gagal", isPresented: $exportError) { Button("OK") {} } message: { Text("Gunakan password minimal 8 karakter dan coba kembali.") }
         .alert("Kunci perangkat tidak tersedia", isPresented: $biometricError) { Button("OK") {} } message: { Text("Aktifkan kode perangkat atau biometrik terlebih dahulu agar TEMPO tidak terkunci tanpa jalan masuk.") }
+        .alert("Penghapusan belum selesai", isPresented: $deletionError) { Button("Coba lagi") {} } message: { Text("Penyimpanan aman belum dapat dihapus. TEMPO mempertahankan tampilan data agar tidak memberi kesan palsu bahwa data sudah hilang.") }
         .fileExporter(isPresented: $showExporter, document: exportDocument, contentType: UTType.data, defaultFilename: "Tempo-Export.tempo") { _ in }
     }
 

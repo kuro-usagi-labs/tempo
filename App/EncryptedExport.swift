@@ -15,13 +15,20 @@ struct TempoExportDocument: FileDocument {
 
 enum EncryptedExport {
     private struct Envelope: Codable {
-        let format = "tempo-encrypted-export"
-        let version = 1
+        let format: String
+        let version: Int
         let salt: String
         let payload: String
+
+        init(salt: String, payload: String) {
+            format = "tempo-encrypted-export"
+            version = 1
+            self.salt = salt
+            self.payload = payload
+        }
     }
 
-    enum ExportError: Error { case weakPassword, encryptionFailed }
+    enum ExportError: Error { case weakPassword, invalidFormat, encryptionFailed, decryptionFailed }
 
     static func encrypt(_ plaintext: Data, password: String) throws -> Data {
         guard password.count >= 8 else { throw ExportError.weakPassword }
@@ -29,11 +36,30 @@ enum EncryptedExport {
         let status = salt.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 16, $0.baseAddress!) }
         guard status == errSecSuccess else { throw ExportError.encryptionFailed }
 
-        var material = Data(password.utf8) + salt
-        for _ in 0..<50_000 { material = Data(SHA256.hash(data: material)) }
-        let key = SymmetricKey(data: material)
+        let key = derivedKey(password: password, salt: salt)
         let sealed = try AES.GCM.seal(plaintext, using: key)
         guard let combined = sealed.combined else { throw ExportError.encryptionFailed }
         return try JSONEncoder().encode(Envelope(salt: salt.base64EncodedString(), payload: combined.base64EncodedString()))
+    }
+
+    static func decrypt(_ exportedData: Data, password: String) throws -> Data {
+        guard password.count >= 8 else { throw ExportError.weakPassword }
+        guard let envelope = try? JSONDecoder().decode(Envelope.self, from: exportedData),
+              envelope.format == "tempo-encrypted-export", envelope.version == 1,
+              let salt = Data(base64Encoded: envelope.salt),
+              let payload = Data(base64Encoded: envelope.payload),
+              let sealed = try? AES.GCM.SealedBox(combined: payload)
+        else { throw ExportError.invalidFormat }
+        do {
+            return try AES.GCM.open(sealed, using: derivedKey(password: password, salt: salt))
+        } catch {
+            throw ExportError.decryptionFailed
+        }
+    }
+
+    private static func derivedKey(password: String, salt: Data) -> SymmetricKey {
+        var material = Data(password.utf8) + salt
+        for _ in 0..<50_000 { material = Data(SHA256.hash(data: material)) }
+        return SymmetricKey(data: material)
     }
 }
