@@ -83,6 +83,7 @@ struct GuidedSessionView: View {
     @State private var seconds = 0
     @State private var safetyConcern = false
     @State private var isPrepared = false
+    @AppStorage("hapticsEnabled") private var hapticsEnabled = true
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -124,7 +125,7 @@ struct GuidedSessionView: View {
         .onChange(of: arousal) { _, newValue in
             guard [.activeLow, .activeRising, .warning].contains(machine.state) else { return }
             machine.rising(level: newValue, threshold: 7)
-            if newValue >= 7 { UIImpactFeedbackGenerator(style: .heavy).impactOccurred() }
+            if newValue >= 7 { playWarningHaptic() }
         }
     }
 
@@ -138,7 +139,7 @@ struct GuidedSessionView: View {
                 Button("Naik") { arousal = min(10, arousal + 1) }.buttonStyle(.bordered)
             }
             Button(machine.state == .warning ? "Pause sekarang" : "Pause") {
-                machine.pause(); seconds = 0; UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+                machine.pause(); seconds = 0; playWarningHaptic()
             }.buttonStyle(.borderedProminent).tint(machine.state == .warning ? .red : .indigo).controlSize(.large)
             Button("Hampir terlambat") { machine.earlyCompletion() }.foregroundStyle(.orange)
         }
@@ -155,6 +156,7 @@ struct GuidedSessionView: View {
     private var stateTitle: String { switch machine.state { case .precheck: "Periksa dulu"; case .prepare: "Tenangkan tubuh"; case .activeLow, .activeRising: "Tetap sadar"; case .warning: "Pause sekarang"; case .pausedRecovery: "Biarkan intensitas turun"; case .resumeReady: "Kembali dalam rentang aman"; default: "" } }
     private var stateMessage: String { switch machine.state { case .warning: "Hands off. Tarik napas dan biarkan tubuh melunak."; case .prepare: "Rilekskan rahang, perut, paha, dan bokong. Jangan mengejar durasi."; case .pausedRecovery: "Kamu dapat lanjut hanya setelah jeda minimum dan intensitas turun."; default: "TEMPO mendukung latihan terstruktur, bukan diagnosis medis." } }
     private func tick() { guard ![.precheck, .completed, .earlyCompletion, .cancelled, .safetyAbort, .timeLimitReached].contains(machine.state) else { return }; seconds += 1; if seconds >= 1_200 { machine.earlyCompletion() } }
+    private func playWarningHaptic() { guard hapticsEnabled else { return }; UIImpactFeedbackGenerator(style: .heavy).impactOccurred() }
 }
 
 struct BreathingView: View {
