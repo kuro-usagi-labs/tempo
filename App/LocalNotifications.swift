@@ -4,11 +4,12 @@ import UserNotifications
 @MainActor
 enum LocalNotifications {
     static func removeAll() { UNUserNotificationCenter.current().removeAllPendingNotificationRequests() }
+    static func removeDailyPlan() { UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["tempo.daily-plan"]) }
     static func requestAndScheduleDailyPlan() async {
         let center = UNUserNotificationCenter.current()
         let granted = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
         guard granted else { return }
-        center.removePendingNotificationRequests(withIdentifiers: ["tempo.daily-plan"])
+        removeDailyPlan()
         var components = DateComponents()
         components.hour = 9
         components.minute = 0

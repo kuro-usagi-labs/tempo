@@ -260,6 +260,8 @@ struct SettingsView: View {
     @AppStorage("biometricLockEnabled") private var biometricLockEnabled = false
     @State private var showDeletionConfirmation = false
     @AppStorage("dailyPlanRemindersEnabled") private var remindersEnabled = false
+    @AppStorage("baselineCompleted") private var baselineCompleted = false
+    @AppStorage("onboardingCompleted") private var onboardingCompleted = false
     var body: some View {
         NavigationStack {
             Form {
@@ -272,7 +274,10 @@ struct SettingsView: View {
                 Section("Preferensi") {
                     Toggle("Haptics", isOn: $haptics)
                     Toggle("Pengingat rencana harian", isOn: $remindersEnabled)
-                        .onChange(of: remindersEnabled) { _, enabled in if enabled { Task { await LocalNotifications.requestAndScheduleDailyPlan() } } }
+                        .onChange(of: remindersEnabled) { _, enabled in
+                            if enabled { Task { await LocalNotifications.requestAndScheduleDailyPlan() } }
+                            else { LocalNotifications.removeDailyPlan() }
+                        }
                     NavigationLink("Tentang keselamatan") { Text("TEMPO bukan alat diagnosis atau layanan darurat. Nyeri, perdarahan, demam, perih saat kencing, atau cairan tidak biasa memerlukan penilaian profesional.").padding() }
                     NavigationLink("Tentang rule engine") { RuleEngineInfoView() }
                 }
@@ -280,11 +285,14 @@ struct SettingsView: View {
         }
         .confirmationDialog("Hapus seluruh data lokal?", isPresented: $showDeletionConfirmation, titleVisibility: .visible) {
             Button("Hapus semua data", role: .destructive) {
-                UserDefaults.standard.removeObject(forKey: "discreetTerminology")
-                UserDefaults.standard.removeObject(forKey: "hapticsEnabled")
-                UserDefaults.standard.removeObject(forKey: "privacyCoverEnabled")
-                UserDefaults.standard.removeObject(forKey: "biometricLockEnabled")
-                UserDefaults.standard.removeObject(forKey: "dailyPlanRemindersEnabled")
+                discreet = false
+                haptics = true
+                privacyCoverEnabled = false
+                biometricLockEnabled = false
+                remindersEnabled = false
+                baselineCompleted = false
+                onboardingCompleted = false
+                UserDefaults.standard.removeObject(forKey: "privacyLockEnabled")
                 LocalNotifications.removeAll()
                 history.deleteAll()
             }
