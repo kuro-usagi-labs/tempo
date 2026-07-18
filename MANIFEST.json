@@ -1,0 +1,248 @@
+{
+  "project": "TEMPO iOS Offline Blueprint",
+  "version": "1.0.1",
+  "generated_at": "2026-07-18T13:31:41.997211+00:00",
+  "file_count": 48,
+  "files": [
+    {
+      "path": "00_OVERVIEW/00_PANDUAN_PENGEMBANGAN.md",
+      "bytes": 3623,
+      "sha256": "b5bb008815e14f1e5de46daad6f93ec0ed351c0617c3ed586fbf0a625539a17d"
+    },
+    {
+      "path": "00_OVERVIEW/01_EXECUTIVE_SUMMARY.md",
+      "bytes": 1961,
+      "sha256": "a41522e9072963aec2c9fdfe622f5279fca0941cb6c4b369af239154d66c0df0"
+    },
+    {
+      "path": "01_PRODUCT/01_PRODUCT_VISION.md",
+      "bytes": 1570,
+      "sha256": "d126519f496bbab98097fff48f3978176a113b570e92a7cb3567f6ac9fc0d4a4"
+    },
+    {
+      "path": "01_PRODUCT/02_PRD.md",
+      "bytes": 3712,
+      "sha256": "aca155a71b1f54ec2c3f25d8137471874bd61f2ee2630c921895afcf30d9b0c1"
+    },
+    {
+      "path": "01_PRODUCT/03_SCOPE_AND_RELEASES.md",
+      "bytes": 1017,
+      "sha256": "e8684fea29fcc7feb7cbcf2e0e711fff0b31d5b08a91e8b5e456f71f6c122db1"
+    },
+    {
+      "path": "01_PRODUCT/04_PERSONAS_AND_JOBS.md",
+      "bytes": 1205,
+      "sha256": "ce56151c671083fe5cfdccde0c28e50b13d2115431355931932e8acfc21188f3"
+    },
+    {
+      "path": "01_PRODUCT/05_INFORMATION_ARCHITECTURE.md",
+      "bytes": 954,
+      "sha256": "0aaf1d06d4e0b8465708f0d611b554c9198649765743ec7fe19dbd582d2c45a8"
+    },
+    {
+      "path": "02_PROGRAM/01_PROGRAM_12_WEEKS.md",
+      "bytes": 2872,
+      "sha256": "3be50915b871cb17d3b0d1ea1c3650b2b3605a2c9379d660ad8bfba2eac52f74"
+    },
+    {
+      "path": "02_PROGRAM/02_WEEKLY_SCHEDULE_TEMPLATES.md",
+      "bytes": 1635,
+      "sha256": "eaf16f953a21326b88078302cece43c64d9bc2337a286249e3540d38c565abad"
+    },
+    {
+      "path": "02_PROGRAM/03_EXERCISE_AND_RECOVERY.md",
+      "bytes": 1762,
+      "sha256": "f286533ca3ce14395878515e3a080d3473d4abb18819a511990741f798d326fa"
+    },
+    {
+      "path": "02_PROGRAM/04_CONTENT_CURRICULUM.md",
+      "bytes": 1301,
+      "sha256": "26799ce8baa7955ac9d940950ec274255f557e8b526d19ec32a8d69111619ea2"
+    },
+    {
+      "path": "03_ENGINE/01_RULE_ENGINE_SPEC.md",
+      "bytes": 2712,
+      "sha256": "ebad1cceae5de1c8ab0ab88fec50ae8815b1e9f84fbef8303b2757c0d21a4225"
+    },
+    {
+      "path": "03_ENGINE/02_DECISION_TABLES.md",
+      "bytes": 1930,
+      "sha256": "2b268499852a72047f8c24ebb39b58dffbbb6f5ba210ae3376f90457e2c8ebbe"
+    },
+    {
+      "path": "03_ENGINE/03_SCORING_MODEL.md",
+      "bytes": 1649,
+      "sha256": "bdb3b01106886733d9a45a8a9d843a471d7d2216ba0212e502784422a838b8af"
+    },
+    {
+      "path": "03_ENGINE/04_SCHEDULER_ENGINE.md",
+      "bytes": 1449,
+      "sha256": "dd2ceed57a88196840efaaf24e5942d53c813ccc55c8edc3490a67e822fe3743"
+    },
+    {
+      "path": "03_ENGINE/05_URGE_MODE_SPEC.md",
+      "bytes": 1525,
+      "sha256": "ee92e0b570df37984725d9df882384bc51e47056a84a06083673706edef03bb2"
+    },
+    {
+      "path": "03_ENGINE/06_GUIDED_SESSION_SPEC.md",
+      "bytes": 1817,
+      "sha256": "819eae2ef3ea4af91f20458425f9f599f90498e793ca986c45ffaf4d034b2de4"
+    },
+    {
+      "path": "03_ENGINE/07_RULES_JSON_EXAMPLES.md",
+      "bytes": 1814,
+      "sha256": "d36193253c4de0d35a4630a89b9d35259e0e8b55456ab3d9bf65749f6f1f5544"
+    },
+    {
+      "path": "04_ENGINEERING/01_IOS_ARCHITECTURE.md",
+      "bytes": 1783,
+      "sha256": "3ba06f6074bc0992e20097f7163fe045d323f7ed518a015a787520c5a9b04af7"
+    },
+    {
+      "path": "04_ENGINEERING/02_REPOSITORY_STRUCTURE.md",
+      "bytes": 1682,
+      "sha256": "322ac5b2d0502d1fc264b5e6fa36524432b2ad7181027d4913a3ec055791645f"
+    },
+    {
+      "path": "04_ENGINEERING/03_DATA_MODEL.md",
+      "bytes": 1769,
+      "sha256": "c92d3fd912eb0b63f324639d851d6cbdc49d109b84d05a4e8badd4b3a68da5f7"
+    },
+    {
+      "path": "04_ENGINEERING/04_LOCAL_SECURITY.md",
+      "bytes": 1680,
+      "sha256": "78249d5deb5bb285a44a897c83766f6ba7f601c2eb59da3bce11b2bc62c99eb5"
+    },
+    {
+      "path": "04_ENGINEERING/05_HEALTHKIT_INTEGRATION.md",
+      "bytes": 1015,
+      "sha256": "1e666a6e595447aa2f6d27f9a2133ce8ae4f266ee8a8f42829de32cb7adecbca"
+    },
+    {
+      "path": "04_ENGINEERING/06_NOTIFICATIONS_AND_BACKGROUND.md",
+      "bytes": 1164,
+      "sha256": "8960274de99d37abdc69469845b22c9e4e13cf73c32ebe76b855b9c9e0a4e234"
+    },
+    {
+      "path": "04_ENGINEERING/07_STATE_MACHINE.md",
+      "bytes": 972,
+      "sha256": "db0201fe442b12b1ad40d8fb992f9f0a46a2978f38e9d7ed55e8121f12f33497"
+    },
+    {
+      "path": "05_DESIGN/01_UI_DESIGN_SYSTEM.md",
+      "bytes": 1492,
+      "sha256": "0deafb4447e5ff143bad28f39b4de564726caf5ca43e4f641a7e518ea74752fc"
+    },
+    {
+      "path": "05_DESIGN/02_DESIGN_TOKENS.md",
+      "bytes": 1218,
+      "sha256": "09cead6ee766c38985662eb6d392569b01f56fcf368a4f5d02dd7f5bea67e1a5"
+    },
+    {
+      "path": "05_DESIGN/03_MOTION_AND_HAPTICS.md",
+      "bytes": 1946,
+      "sha256": "36864833cb54d060a01b789c5c7a61d341e71201e9c30b3cbd405e98de1abf80"
+    },
+    {
+      "path": "05_DESIGN/04_SCREEN_SPECIFICATIONS.md",
+      "bytes": 1577,
+      "sha256": "4011a4d575756edbca150767fefce972e97cdf6f04cd6ae92bcf31a852c052b6"
+    },
+    {
+      "path": "05_DESIGN/05_COPY_AND_TERMINOLOGY.md",
+      "bytes": 1265,
+      "sha256": "4c177928ff166b060e95bfeeae2a69249443489a365afe88ba78b368ee1a594d"
+    },
+    {
+      "path": "05_DESIGN/06_ACCESSIBILITY.md",
+      "bytes": 976,
+      "sha256": "fa157de5273b7fc030dd92263c24e24412d69744a24bc151410ed6b0c12f003e"
+    },
+    {
+      "path": "06_SAFETY/01_MEDICAL_SAFETY_BOUNDARIES.md",
+      "bytes": 1689,
+      "sha256": "7bff52e58b55145cc7c074d2ec9375f66bd1a7e1e610b6cbc0079dc6e61e484e"
+    },
+    {
+      "path": "06_SAFETY/02_CONTENT_GOVERNANCE.md",
+      "bytes": 1064,
+      "sha256": "e1cf9ee5b503ab4bf01ac36203c59a9d0e7e71354fdbeee0c1532b4006dfd9db"
+    },
+    {
+      "path": "07_QUALITY/01_TEST_STRATEGY.md",
+      "bytes": 1454,
+      "sha256": "66bf4b05f37d8e4484623a38afa1f7a44b292cfab7352c71bf2d763cb73cb16e"
+    },
+    {
+      "path": "07_QUALITY/02_ACCEPTANCE_CRITERIA.md",
+      "bytes": 1237,
+      "sha256": "8c81827dcfd4a66273e029cfabd884bf15c40c066177655fbc366d91278ad83b"
+    },
+    {
+      "path": "07_QUALITY/03_RISK_REGISTER.md",
+      "bytes": 1239,
+      "sha256": "d127f33e3da8ff428f17c2bccd06f17513d458275ebe3e6f9473163e54d5ee4c"
+    },
+    {
+      "path": "08_DELIVERY/01_IMPLEMENTATION_ROADMAP.md",
+      "bytes": 1496,
+      "sha256": "e1661bf032427a8a5a89ce4cf86c783a51874d8fa2a61c65ed5cf1441ceef640"
+    },
+    {
+      "path": "08_DELIVERY/02_BACKLOG_USER_STORIES.md",
+      "bytes": 1538,
+      "sha256": "27e3a76da09ffb406930c16756d02c2daf1a87547b12cbfa2d0ce4c6ae4bc337"
+    },
+    {
+      "path": "08_DELIVERY/03_SIDELOAD_AND_BUILD.md",
+      "bytes": 1863,
+      "sha256": "1a1529be526600e64f9c5bca05e96f32c3a1c4420c3dfbe2147b44c1c325d0e0"
+    },
+    {
+      "path": "08_DELIVERY/04_DEFINITION_OF_DONE.md",
+      "bytes": 601,
+      "sha256": "8a4af4ab00a47d54f37258e875865e8b915fda4c8658ac2d6c77072b57f32e49"
+    },
+    {
+      "path": "09_CONTENT/01_SAMPLE_ONBOARDING_COPY.md",
+      "bytes": 805,
+      "sha256": "cdfb84bb36214c9037db55f4a27ac8f4e7a6ba8c5fd2cae37dd3d2520838d0aa"
+    },
+    {
+      "path": "09_CONTENT/02_SAMPLE_SESSION_COPY.md",
+      "bytes": 930,
+      "sha256": "8d42a8b16150751cae963f048edff871cb0ad5543569649e26418ee036dbab51"
+    },
+    {
+      "path": "09_CONTENT/03_SAMPLE_HEALTH_COPY.md",
+      "bytes": 893,
+      "sha256": "a405d6d62f346a8561a61085052f9c5e5e3dc566c63eb19811939f9e74aae34c"
+    },
+    {
+      "path": "10_REFERENCE/01_SOURCE_NOTES.md",
+      "bytes": 1645,
+      "sha256": "4c22835f02114c9c608216caeb5ca4786f4cb0d613ed42c3f9e99ebc878f1c63"
+    },
+    {
+      "path": "10_REFERENCE/02_GLOSSARY.md",
+      "bytes": 1017,
+      "sha256": "94a2c239ac7ac6f6abf56ca3cd73ec513187182c413b9260618c32d50e86e662"
+    },
+    {
+      "path": "10_REFERENCE/03_OPEN_DECISIONS.md",
+      "bytes": 1017,
+      "sha256": "a045f22b0a7a8bc1513fcaebcf250f826930caab078884f37adbfa48dc809aa8"
+    },
+    {
+      "path": "README.md",
+      "bytes": 2632,
+      "sha256": "c35f1673ff5721a067bf63843a0c0ae79bbed914edfef7fb14a9f8f2d0f7d069"
+    },
+    {
+      "path": "README_INDONESIA.md",
+      "bytes": 2523,
+      "sha256": "2a8c4389f0f08153252d2a3064d54a5b6f4abe4b5cc93dbbc1c7be3a20e57b7c"
+    }
+  ]
+}

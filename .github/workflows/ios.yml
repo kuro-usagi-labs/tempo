@@ -1,0 +1,33 @@
+name: iOS build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test-and-package:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install project generator
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate
+      - name: Run unit tests
+        run: xcodebuild test -project Tempo.xcodeproj -scheme Tempo -destination 'platform=iOS Simulator,name=iPhone 16 Pro' CODE_SIGNING_ALLOWED=NO
+      - name: Build archive
+        run: xcodebuild archive -project Tempo.xcodeproj -scheme Tempo -archivePath "$PWD/build/Tempo.xcarchive" -sdk iphoneos CODE_SIGNING_ALLOWED=NO
+      - name: Create unsigned IPA artifact
+        run: |
+          mkdir -p build/Payload
+          cp -R build/Tempo.xcarchive/Products/Applications/Tempo.app build/Payload/
+          ditto -c -k --sequesterRsrc --keepParent build/Payload build/Tempo-unsigned.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tempo-unsigned-ipa
+          path: build/Tempo-unsigned.ipa
+          if-no-files-found: error

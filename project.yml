@@ -1,0 +1,33 @@
+name: Tempo
+options:
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    PRODUCT_BUNDLE_IDENTIFIER: labs.kurousagi.tempo
+    SWIFT_VERSION: "5.10"
+    TARGETED_DEVICE_FAMILY: "1"
+targets:
+  Tempo:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+      - path: Sources
+    settings:
+      base:
+        INFOPLIST_FILE: App/Info.plist
+        PRODUCT_NAME: Tempo
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+    scheme:
+      testTargets:
+        - TempoTests
+  TempoTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests
+    dependencies:
+      - target: Tempo
