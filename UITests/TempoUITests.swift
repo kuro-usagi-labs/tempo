@@ -26,18 +26,18 @@ final class TempoUITests: XCTestCase {
     func testProgramCalendarIsReachableAfterBaseline() {
         completeOnboarding()
         app.tabBars.buttons["Program"].tap()
-        XCTAssertTrue(app.otherElements["tab.program"].waitForExistence(timeout: 5))
+        XCTAssertTrue(identifiedElement("tab.program").waitForExistence(timeout: 5))
     }
 
     func testImmediatePrivateRouteUsesThreeDecisionFlow() {
         completeOnboarding()
-        app.buttons["Aku mau onani sekarang"].tap()
-        XCTAssertTrue(app.otherElements["immediate.action"].waitForExistence(timeout: 5))
-        app.buttons["Sesi privat"].tap()
-        app.buttons["Berikutnya"].tap()
-        app.buttons["Berikutnya"].tap()
-        app.buttons["Lanjutkan"].tap()
-        XCTAssertTrue(app.otherElements["private.session.timer"].waitForExistence(timeout: 5))
+        tapButton("Aku mau onani sekarang")
+        XCTAssertTrue(identifiedElement("immediate.action").waitForExistence(timeout: 5))
+        tapButton("Sesi privat")
+        tapButton("Berikutnya")
+        tapButton("Berikutnya")
+        tapButton("Lanjutkan")
+        XCTAssertTrue(identifiedElement("private.session.timer").waitForExistence(timeout: 5))
     }
 
     private func completeOnboarding() {
@@ -62,5 +62,16 @@ final class TempoUITests: XCTestCase {
         XCTAssertTrue(nextButton.waitForExistence(timeout: 5))
         XCTAssertTrue(nextButton.isEnabled)
         nextButton.tap()
+    }
+
+    private func tapButton(_ label: String) {
+        let button = app.buttons[label]
+        XCTAssertTrue(button.waitForExistence(timeout: 5))
+        XCTAssertTrue(button.isEnabled)
+        button.tap()
+    }
+
+    private func identifiedElement(_ identifier: String) -> XCUIElement {
+        app.descendants(matching: .any)[identifier]
     }
 }
