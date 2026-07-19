@@ -65,7 +65,7 @@ jobs:
           /usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$app_path/Info.plist"
           /usr/libexec/PlistBuddy -c 'Print :CFBundleSupportedPlatforms:0' "$app_path/Info.plist" | /usr/bin/grep -q iPhoneOS
       - name: Calculate IPA checksum
-        run: shasum -a 256 build/Tempo-resign-ready.ipa > build/Tempo-resign-ready.ipa.sha256
+        run: (cd build && shasum -a 256 Tempo-resign-ready.ipa > Tempo-resign-ready.ipa.sha256)
       - uses: actions/upload-artifact@v4
         with:
           name: Tempo-resign-ready-ipa
