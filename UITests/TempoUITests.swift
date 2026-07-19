@@ -11,8 +11,8 @@ final class TempoUITests: XCTestCase {
     }
 
     func testOnboardingStartsWithIntegratedBaseline() {
-        XCTAssertTrue(app.otherElements["onboarding.v2"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Lanjut"].exists)
+        XCTAssertTrue(nextButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(nextButton.isEnabled)
     }
 
     func testOnboardingCanReachFourTabShell() {
@@ -41,12 +41,26 @@ final class TempoUITests: XCTestCase {
     }
 
     private func completeOnboarding() {
-        app.buttons["Lanjut"].tap()
-        app.buttons["Lanjut"].tap()
-        app.switches["Saya berusia 18 tahun atau lebih"].tap()
-        app.buttons["Lanjut"].tap()
-        for _ in 0..<8 { app.buttons["Lanjut"].tap() }
-        app.buttons["Masuk ke Hari Ini"].tap()
+        tapNext()
+        tapNext()
+        let adultConfirmation = app.buttons["onboarding.adultConfirmed"]
+        XCTAssertTrue(adultConfirmation.waitForExistence(timeout: 5))
+        adultConfirmation.tap()
+        XCTAssertTrue(nextButton.isEnabled)
+        tapNext()
+        for _ in 0..<8 { tapNext() }
+        let finishButton = app.buttons["onboarding.finish"]
+        XCTAssertTrue(finishButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(finishButton.isEnabled)
+        finishButton.tap()
         XCTAssertTrue(app.tabBars.buttons["Hari Ini"].waitForExistence(timeout: 5))
+    }
+
+    private var nextButton: XCUIElement { app.buttons["onboarding.next"] }
+
+    private func tapNext() {
+        XCTAssertTrue(nextButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(nextButton.isEnabled)
+        nextButton.tap()
     }
 }

@@ -75,7 +75,24 @@ struct TempoV2Onboarding: View {
                     Label("Sebelum mulai", systemImage: "checkmark.seal") .font(TempoDesign.Typography.sectionTitle)
                     Text("TEMPO untuk dewasa dan bukan alat diagnosis. Gejala nyeri, darah, demam, perih saat kencing, atau cedera perlu pemeriksaan profesional.")
                         .foregroundStyle(TempoDesign.Palette.textSecondary)
-                    Toggle("Saya berusia 18 tahun atau lebih", isOn: $adultConfirmed).tint(TempoDesign.Palette.accent)
+                    Button { adultConfirmed.toggle() } label: {
+                        HStack(spacing: TempoDesign.Spacing.sm) {
+                            Image(systemName: adultConfirmed ? "checkmark.circle.fill" : "circle")
+                                .font(.title3)
+                                .foregroundStyle(adultConfirmed ? TempoDesign.Palette.accentSoft : TempoDesign.Palette.textSecondary)
+                            Text("Saya berusia 18 tahun atau lebih")
+                                .font(TempoDesign.Typography.cardTitle)
+                            Spacer()
+                        }
+                        .padding(TempoDesign.Spacing.sm)
+                        .background(TempoDesign.Palette.surfaceElevated, in: RoundedRectangle(cornerRadius: TempoDesign.Radius.small, style: .continuous))
+                    }
+                    .buttonStyle(TempoTactileButtonStyle())
+                    .accessibilityLabel("Saya berusia 18 tahun atau lebih")
+                    .accessibilityValue(adultConfirmed ? "Dikonfirmasi" : "Belum dikonfirmasi")
+                    .accessibilityHint("Ketuk untuk mengonfirmasi usia dewasa")
+                    .accessibilityAddTraits(adultConfirmed ? .isSelected : [])
+                    .accessibilityIdentifier("onboarding.adultConfirmed")
                     Toggle("Gunakan istilah yang lebih privat", isOn: $discreetTerminology).tint(TempoDesign.Palette.accent)
                 }
             }
@@ -151,6 +168,7 @@ struct TempoV2Onboarding: View {
                     .accessibilityIdentifier("onboarding.finish")
             } else {
                 TempoPrimaryButton("Lanjut", icon: "arrow.right", isEnabled: canAdvance) { step += 1 }
+                    .accessibilityIdentifier("onboarding.next")
             }
         }
     }
