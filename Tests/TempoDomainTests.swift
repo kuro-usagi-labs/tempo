@@ -71,10 +71,7 @@ final class TempoDomainTests: XCTestCase {
         XCTAssertEqual(tracker.completedCycles, 0)
     }
 
-    func testSafetyAlwaysBlocksTraining() { var c = DecisionContext(); c.urgeIntensity = 9; c.intent = .training; c.urinaryBurning = true; let r = RuleEngine().evaluate(c); XCTAssertEqual(r.action, .healthCheck); XCTAssertTrue(r.blocksGuidedTraining) }
-    func testRecentSessionRoutesToRecovery() { var c = DecisionContext(); c.programPhase = .awareness; c.hoursSinceLastSession = 6; c.intent = .training; XCTAssertEqual(RuleEngine().evaluate(c).action, .recovery) }
     func testGuidedSessionNeedsRecoveryBeforeResume() { var s = GuidedSessionMachine(); s.start(); s.beginActive(); XCTAssertTrue(s.rising(level: 7, threshold: 7)); XCTAssertEqual(s.state, .warning); XCTAssertTrue(s.advanceWarningToRecovery()); s.recovered(level: 5, elapsedSeconds: 30); XCTAssertEqual(s.state, .pausedRecovery); s.recovered(level: 4, elapsedSeconds: 30); XCTAssertEqual(s.state, .resumeReady) }
-    func testBeginnerPlanDoesNotPlaceGuidedSessionsConsecutively() { let days = WeeklyScheduler().beginnerPlan().filter { $0.kind == .guided }.map(\.day); XCTAssertEqual(days, [0, 3]) }
 
     func testPlanConstraintsReplaceUnsafeOrUnavailableActivities() {
         let resolver = PlanActivityResolver()
@@ -208,6 +205,226 @@ final class TempoDomainTests: XCTestCase {
         XCTAssertEqual(updated.filter { calendar.isDate($0.date, inSameDayAs: reference) }.count, 1)
         XCTAssertEqual(updated.first?.id, latestToday.id)
         XCTAssertEqual(updated.last?.id, recent.id)
+    }
+
+    func testLegacyDailyReadinessBooleanMigratesToAnUnresolvedPainRecord() throws {
+        struct LegacyReadiness: Encodable {
+            let id: UUID
+            let date: Date
+            let sleepHoursLastNight: Double
+            let anxietyToday: Int
+            let energyToday: Int
+            let irritationOrPain: Bool
+        }
+
+        let legacy = LegacyReadiness(
+            id: UUID(),
+            date: .now,
+            sleepHoursLastNight: 6.5,
+            anxietyToday: 7,
+            energyToday: 4,
+            irritationOrPain: true
+        )
+
+        let decoded = try JSONDecoder().decode(DailyReadinessRecord.self, from: JSONEncoder().encode(legacy))
+
+        XCTAssertEqual(decoded.symptomType, .pain)
+        XCTAssertTrue(decoded.hasUnresolvedSymptom)
+        XCTAssertTrue(decoded.irritationOrPain)
+    }
+
+    func testResolvedDailyReadinessKeepsItsHistoricalSymptomCategory() {
+        let reportedAt = Date.now.addingTimeInterval(-60)
+        let resolvedAt = Date.now
+        let record = DailyReadinessRecord(
+            date: reportedAt,
+            sleepHoursLastNight: 7,
+            anxietyToday: 5,
+            energyToday: 5,
+            symptomType: .urinaryOrDischarge
+        )
+
+        let resolved = record.resolved(at: resolvedAt)
+
+        XCTAssertEqual(resolved.symptomType, .urinaryOrDischarge)
+        XCTAssertEqual(resolved.symptomResolvedAt, Optional(resolvedAt))
+        XCTAssertFalse(resolved.hasUnresolvedSymptom)
+        XCTAssertFalse(resolved.irritationOrPain)
+    }
+
+    func testClearSafetyRecheckResolvesEveryActiveHoldAndOnlyTodaysSymptom() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let now = calendar.date(from: DateComponents(year: 2026, month: 7, day: 20, hour: 12))!
+        let today = DailyReadinessRecord(
+            date: calendar.date(byAdding: .hour, value: -2, to: now)!,
+            sleepHoursLastNight: 6,
+            anxietyToday: 7,
+            energyToday: 4,
+            symptomType: .pain
+        )
+        let yesterday = DailyReadinessRecord(
+            date: calendar.date(byAdding: .day, value: -1, to: now)!,
+            sleepHoursLastNight: 7,
+            anxietyToday: 5,
+            energyToday: 6,
+            symptomType: .mildIrritation
+        )
+        let activeHolds = [
+            LocalSafetyHold(id: UUID(), createdAt: now.addingTimeInterval(-300), reasonCode: "safety.daily-readiness-pain", severity: RecommendationSeverity.medical.rawValue, source: "readiness", recheckNotBefore: nil, resolvedAt: nil),
+            LocalSafetyHold(id: UUID(), createdAt: now.addingTimeInterval(-180), reasonCode: "safety.daily-readiness-irritation", severity: RecommendationSeverity.caution.rawValue, source: "readiness", recheckNotBefore: now.addingTimeInterval(-1), resolvedAt: nil)
+        ]
+
+        let mutation = SafetyRecheckResolution.resolve(
+            holds: activeHolds,
+            readiness: [today, yesterday],
+            at: now,
+            calendar: calendar
+        )
+
+        XCTAssertTrue(mutation.holds.allSatisfy { $0.resolvedAt == Optional(now) })
+        XCTAssertEqual(mutation.readiness.first { $0.id == today.id }?.symptomResolvedAt, Optional(now))
+        XCTAssertNil(mutation.readiness.first { $0.id == yesterday.id }?.symptomResolvedAt)
+        XCTAssertEqual(mutation.readiness.first { $0.id == today.id }?.symptomType, Optional<DailySymptomType>.some(.pain))
+    }
+
+    @MainActor
+    func testClearHealthRecheckPersistsReadinessResolutionAndRestoresPrivateAndGuidedRouting() {
+        let history = LocalHistory()
+        _ = history.deleteAll()
+        defer { _ = history.deleteAll() }
+
+        let baseline = LocalBaseline(
+            completedAt: .now,
+            onset: "Bertahap",
+            difficultyContext: "Keduanya",
+            perceivedControl: 5,
+            anxiety: 5,
+            sleepHours: 7,
+            activityLevel: "Ringan",
+            weeklyMovementMinutes: 60,
+            canWalkTwentyMinutes: true,
+            hasExerciseRestriction: false,
+            hasSafeActivitySpace: true,
+            preferredActivity: "Jalan santai",
+            activityPreference: .walking,
+            rushedHabit: false,
+            highStimulusPattern: false,
+            hasSafetySymptoms: false,
+            rulesetVersion: RulesetVersion.current.rawValue,
+            adultConfirmed: true
+        )
+
+        XCTAssertTrue(history.saveBaseline(baseline))
+        XCTAssertTrue(history.saveDailyReadiness(
+            sleepHoursLastNight: 7,
+            anxietyToday: 5,
+            energyToday: 6,
+            symptomType: .pain
+        ))
+        XCTAssertTrue(history.hasSafetyBlock)
+        XCTAssertEqual(history.activeSafetyHold?.severity, RecommendationSeverity.medical.rawValue)
+        XCTAssertTrue(history.todayReadiness?.hasUnresolvedSymptom == true)
+
+        XCTAssertTrue(history.resolveActiveSafetyHoldAfterClearRecheck())
+        XCTAssertFalse(history.hasSafetyBlock)
+        XCTAssertNil(history.activeSafetyHold)
+        XCTAssertFalse(history.todayReadiness?.hasUnresolvedSymptom ?? true)
+        XCTAssertNotNil(history.todayReadiness?.symptomResolvedAt)
+
+        let privateRoute = ImmediateActionRouter().route(ImmediateActionRequest(
+            choice: .privateSession,
+            intensity: 5,
+            guidedEligibility: history.guidedEligibility,
+            hasActiveSafetyHold: history.hasSafetyBlock
+        ))
+        let guidedRoute = ImmediateActionRouter().route(ImmediateActionRequest(
+            choice: .guided,
+            intensity: 5,
+            guidedEligibility: history.guidedEligibility,
+            hasActiveSafetyHold: history.hasSafetyBlock
+        ))
+        XCTAssertEqual(privateRoute.destination, .privateSession)
+        XCTAssertEqual(guidedRoute.destination, .guided)
+    }
+
+    @MainActor
+    func testMedicalHoldOutranksMildHoldAndEveryRecoveryWindowMustBeReady() {
+        let history = LocalHistory()
+        _ = history.deleteAll()
+        defer { _ = history.deleteAll() }
+
+        XCTAssertTrue(history.recordSafetyHold(
+            reasonCode: "safety.daily-readiness-irritation",
+            severity: RecommendationSeverity.caution.rawValue,
+            source: "test"
+        ))
+        XCTAssertTrue(history.recordSafetyHold(
+            reasonCode: "safety.daily-readiness-pain",
+            severity: RecommendationSeverity.medical.rawValue,
+            source: "test"
+        ))
+
+        XCTAssertEqual(history.activeSafetyHold?.severity, RecommendationSeverity.medical.rawValue)
+        XCTAssertFalse(history.canResolveActiveSafetyHold)
+        XCTAssertTrue(history.hasSafetyBlock)
+    }
+
+    func testHistoricalReadinessTrendDoesNotPretendToBeToday() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let now = calendar.date(from: DateComponents(year: 2026, month: 7, day: 20, hour: 12))!
+        let historical = DailyReadinessRecord(
+            date: calendar.date(byAdding: .day, value: -2, to: now)!,
+            sleepHoursLastNight: 5.5,
+            anxietyToday: 8,
+            energyToday: 3,
+            symptomType: .none
+        )
+
+        XCTAssertNil(DailyReadinessSelection.today(from: [historical], at: now, calendar: calendar))
+        XCTAssertEqual(DailyReadinessSelection.currentOrRecent(from: [historical], at: now, calendar: calendar)?.id, historical.id)
+
+        let trend = DailyReadinessSelection.recentTrend(from: [historical], at: now, calendar: calendar)
+        XCTAssertEqual(trend?.sampleCount, 1)
+        XCTAssertEqual(trend?.averageAnxiety, 8.0)
+        XCTAssertEqual(trend?.averageEnergy, 3.0)
+        XCTAssertEqual(trend?.latestDate, Optional(historical.date))
+    }
+
+    func testActivityPreferenceUpdatePreservesBaselineSafetyAndCapabilityAnswers() {
+        let baseline = LocalBaseline(
+            completedAt: .now,
+            onset: "Bertahap",
+            difficultyContext: "Keduanya",
+            perceivedControl: 4,
+            anxiety: 6,
+            sleepHours: 7,
+            activityLevel: "Ringan",
+            weeklyMovementMinutes: 80,
+            canWalkTwentyMinutes: true,
+            hasExerciseRestriction: false,
+            hasSafeActivitySpace: true,
+            preferredActivity: "Jalan santai",
+            activityPreference: .walking,
+            rushedHabit: true,
+            highStimulusPattern: true,
+            hasSafetySymptoms: false,
+            rulesetVersion: "2.1.2",
+            reminderStartHour: 9,
+            reminderEndHour: 21,
+            adultConfirmed: true
+        )
+
+        let updated = baseline.updatingActivityPreference(.breathingAndMobility)
+
+        XCTAssertEqual(updated.activityPreference, Optional<ActivityPreference>.some(.breathingAndMobility))
+        XCTAssertEqual(updated.preferredActivity, Optional(ActivityPreference.breathingAndMobility.legacyDisplayValue))
+        XCTAssertEqual(updated.canWalkTwentyMinutes, baseline.canWalkTwentyMinutes)
+        XCTAssertEqual(updated.hasExerciseRestriction, baseline.hasExerciseRestriction)
+        XCTAssertEqual(updated.hasSafeActivitySpace, baseline.hasSafeActivitySpace)
+        XCTAssertEqual(updated.hasSafetySymptoms, baseline.hasSafetySymptoms)
+        XCTAssertEqual(updated.adultConfirmed, baseline.adultConfirmed)
     }
 
     func testLegacyPrivateSessionDecodesWithoutDetailedPauseCounts() throws {

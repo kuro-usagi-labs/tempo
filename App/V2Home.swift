@@ -83,12 +83,12 @@ struct TempoTodayScreen: View {
         .background(TempoDesign.Palette.canvas)
         .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $showingReadinessCheckIn, onDismiss: { pendingPrimaryActivity = nil }) {
-            TempoDailyReadinessCheckInSheet(existing: history.todayReadiness) { sleepHours, anxiety, energy, irritationOrPain in
+            TempoDailyReadinessCheckInSheet(existing: history.todayReadiness) { sleepHours, anxiety, energy, symptomType in
                 saveReadiness(
                     sleepHoursLastNight: sleepHours,
                     anxietyToday: anxiety,
                     energyToday: energy,
-                    irritationOrPain: irritationOrPain
+                    symptomType: symptomType
                 )
             }
             .presentationDetents([.medium, .large])
@@ -119,15 +119,17 @@ struct TempoTodayScreen: View {
     private var safetyStatus: some View {
         HStack(spacing: TempoDesign.Spacing.sm) {
             TempoStatusBadge(
-                history.hasReadinessSafetyConcern ? "Nyeri atau iritasi perlu diperiksa" : "Latihan dijeda sementara",
+                history.hasReadinessSafetyConcern ? "Keluhan hari ini perlu diperiksa" : "Latihan dijeda sementara",
                 tone: .caution,
                 icon: "cross.case.fill"
             )
+            .accessibilityIdentifier("today.safety.status")
             Spacer()
-            Button("Periksa") { coordinator.open(.healthCheck, tab: .profile) }
+            Button("Periksa") { openSafetyRecheck() }
                 .font(TempoDesign.Typography.supporting)
                 .foregroundStyle(TempoDesign.Palette.caution)
                 .frame(minHeight: 44)
+                .accessibilityIdentifier("today.safety.recheck")
         }
         .padding(.horizontal, TempoDesign.Spacing.md)
         .padding(.vertical, TempoDesign.Spacing.sm)
@@ -158,8 +160,9 @@ struct TempoTodayScreen: View {
                         .foregroundStyle(TempoDesign.Palette.accentSoft)
                         .accessibilityHidden(true)
                 }
-                if history.hasReadinessSafetyConcern {
-                    TempoStatusBadge("Nyeri atau iritasi ditandai", tone: .caution, icon: "cross.case.fill")
+                if let symptom = history.todayReadiness?.symptomType,
+                          history.hasReadinessSafetyConcern {
+                    TempoStatusBadge("\(symptom.displayName) ditandai", tone: .caution, icon: "cross.case.fill")
                 }
                 TempoSecondaryButton(history.todayReadiness == nil ? "Isi check-in" : "Perbarui", icon: "slider.horizontal.3", tone: .accent) {
                     pendingPrimaryActivity = nil
@@ -292,7 +295,7 @@ struct TempoTodayScreen: View {
             return
         }
         guard !history.hasSafetyBlock else {
-            coordinator.open(.healthCheck, tab: .profile)
+            openSafetyRecheck()
             return
         }
         openActivity(item)
@@ -306,23 +309,33 @@ struct TempoTodayScreen: View {
         sleepHoursLastNight: Double,
         anxietyToday: Int,
         energyToday: Int,
-        irritationOrPain: Bool
+        symptomType: DailySymptomType
     ) -> Bool {
         guard history.saveDailyReadiness(
             sleepHoursLastNight: sleepHoursLastNight,
             anxietyToday: anxietyToday,
             energyToday: energyToday,
-            irritationOrPain: irritationOrPain
+            symptomType: symptomType
         ) else { return false }
 
         let shouldOpenPrimary = pendingPrimaryActivity != nil
         pendingPrimaryActivity = nil
-        if irritationOrPain || history.hasSafetyBlock {
-            coordinator.open(.healthCheck, tab: .profile)
+        if symptomType.requiresSafetyHold || history.hasSafetyBlock {
+            openSafetyRecheck()
         } else if shouldOpenPrimary, let updated = history.todayPrimaryPlan, updated.status.isActionable {
             openActivity(updated)
         }
         return true
+    }
+
+    private func openSafetyRecheck() {
+        if let hold = history.activeSafetyHold,
+           RecommendationSeverity(rawValue: hold.severity) == .caution,
+           hold.reasonCode.localizedCaseInsensitiveContains("irritation") {
+            coordinator.open(.safetyRecoveryBlock(hold.reasonCode, hold.recheckNotBefore), tab: .profile)
+        } else {
+            coordinator.open(.healthCheck, tab: .profile)
+        }
     }
 
     private func openActivity(_ item: LocalPlanDay) {
@@ -349,21 +362,23 @@ struct TempoTodayScreen: View {
 /// inputs that can safely adapt today's plan and never attempts a diagnosis.
 struct TempoDailyReadinessCheckInSheet: View {
     let existing: DailyReadinessRecord?
-    let onSave: (Double, Int, Int, Bool) -> Bool
+    let onSave: (Double, Int, Int, DailySymptomType) -> Bool
     @Environment(\.dismiss) private var dismiss
     @State private var sleepHours: Double
     @State private var anxiety: Int
     @State private var energy: Int
-    @State private var irritationOrPain: Bool
+    @State private var symptomReported: Bool
+    @State private var symptomType: DailySymptomType
     @State private var saveFailed = false
 
-    init(existing: DailyReadinessRecord?, onSave: @escaping (Double, Int, Int, Bool) -> Bool) {
+    init(existing: DailyReadinessRecord?, onSave: @escaping (Double, Int, Int, DailySymptomType) -> Bool) {
         self.existing = existing
         self.onSave = onSave
         _sleepHours = State(initialValue: existing?.sleepHoursLastNight ?? 7)
         _anxiety = State(initialValue: existing?.anxietyToday ?? 5)
         _energy = State(initialValue: existing?.energyToday ?? 5)
-        _irritationOrPain = State(initialValue: existing?.irritationOrPain ?? false)
+        _symptomReported = State(initialValue: existing?.hasUnresolvedSymptom ?? false)
+        _symptomType = State(initialValue: existing?.symptomType == .none ? .mildIrritation : (existing?.symptomType ?? .mildIrritation))
     }
 
     var body: some View {
@@ -393,19 +408,9 @@ struct TempoDailyReadinessCheckInSheet: View {
                         suffix: " jam",
                         accessibilityIdentifier: "today.readiness.sleep"
                     )
-                    TempoSurfaceCard(tint: irritationOrPain ? TempoDesign.Palette.caution : TempoDesign.Palette.surface, emphasis: irritationOrPain ? .tinted : .standard) {
-                        VStack(alignment: .leading, spacing: TempoDesign.Spacing.xs) {
-                            Toggle("Ada nyeri atau iritasi yang perlu diperiksa", isOn: $irritationOrPain)
-                                .tint(TempoDesign.Palette.caution)
-                            if irritationOrPain {
-                                Text("TEMPO akan menjeda aktivitas dan mengarahkanmu ke pemeriksaan setelah disimpan.")
-                                    .font(TempoDesign.Typography.supporting)
-                                    .foregroundStyle(TempoDesign.Palette.textSecondary)
-                            }
-                        }
-                    }
+                    symptomQuestion
                     TempoPrimaryButton("Simpan check-in", icon: "checkmark", accessibilityHint: "Menyimpan kondisi hari ini secara lokal") {
-                        if onSave(sleepHours, anxiety, energy, irritationOrPain) {
+                        if onSave(sleepHours, anxiety, energy, symptomReported ? symptomType : .none) {
                             dismiss()
                         } else {
                             saveFailed = true
@@ -430,6 +435,62 @@ struct TempoDailyReadinessCheckInSheet: View {
                 Text("TEMPO tidak akan mengubah rencana atau membuka aktivitas sampai catatan lokal tersimpan.")
             }
         }
+    }
+
+    private var symptomQuestion: some View {
+        TempoSurfaceCard(tint: symptomReported ? TempoDesign.Palette.caution : TempoDesign.Palette.surface, emphasis: symptomReported ? .tinted : .standard) {
+            VStack(alignment: .leading, spacing: TempoDesign.Spacing.sm) {
+                Text("Ada nyeri, iritasi, atau keluhan baru?")
+                    .font(TempoDesign.Typography.cardTitle)
+                HStack(spacing: TempoDesign.Spacing.sm) {
+                    symptomAnswerButton("Tidak", selected: !symptomReported, identifier: "today.readiness.symptom.none") {
+                        symptomReported = false
+                        symptomType = .none
+                    }
+                    symptomAnswerButton("Ya", selected: symptomReported, identifier: "today.readiness.symptom.yes") {
+                        symptomReported = true
+                        if symptomType == .none { symptomType = .mildIrritation }
+                    }
+                }
+                if symptomReported {
+                    VStack(spacing: TempoDesign.Spacing.xs) {
+                        ForEach([DailySymptomType.mildIrritation, .pain, .urinaryOrDischarge, .bloodOrFever], id: \.self) { type in
+                            Button {
+                                symptomType = type
+                            } label: {
+                                HStack(spacing: TempoDesign.Spacing.sm) {
+                                    Image(systemName: symptomType == type ? "checkmark.circle.fill" : "circle")
+                                    Text(type.displayName)
+                                    Spacer()
+                                }
+                                .font(TempoDesign.Typography.supporting)
+                                .foregroundStyle(symptomType == type ? TempoDesign.Palette.caution : TempoDesign.Palette.textPrimary)
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                .padding(.horizontal, TempoDesign.Spacing.sm)
+                                .background(symptomType == type ? TempoDesign.Palette.caution.opacity(0.14) : TempoDesign.Palette.surface, in: RoundedRectangle(cornerRadius: TempoDesign.Radius.small, style: .continuous))
+                            }
+                            .buttonStyle(TempoTactileButtonStyle())
+                            .accessibilityIdentifier("today.readiness.symptom.\(type.rawValue)")
+                        }
+                    }
+                    Text(symptomType == .mildIrritation ? "TEMPO menjeda sesi privat dan terpandu selama pemulihan, lalu meminta pemeriksaan ulang." : "TEMPO menjeda sesi privat dan terpandu lalu mengarahkanmu ke pemeriksaan.")
+                        .font(TempoDesign.Typography.supporting)
+                        .foregroundStyle(TempoDesign.Palette.textSecondary)
+                }
+            }
+        }
+    }
+
+    private func symptomAnswerButton(_ title: String, selected: Bool, identifier: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(TempoDesign.Typography.cardTitle)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .foregroundStyle(selected ? Color.white : TempoDesign.Palette.caution)
+                .background(selected ? TempoDesign.Palette.caution : TempoDesign.Palette.caution.opacity(0.12), in: RoundedRectangle(cornerRadius: TempoDesign.Radius.small, style: .continuous))
+        }
+        .buttonStyle(TempoTactileButtonStyle())
+        .accessibilityIdentifier(identifier)
     }
 
     private func readinessSlider(
@@ -490,12 +551,27 @@ struct TempoProgramScreen: View {
     @State private var selectedDay = Calendar.current.startOfDay(for: .now)
 
     private var currentWeekStart: Date { WeeklyPlanGenerator.startOfMonday(for: selectedDay) }
+    private var displayedProgramWeek: Int { history.displayedProgramWeek(for: currentWeekStart) }
     private var weekDays: [Date] { (0..<7).compactMap { Calendar.current.date(byAdding: .day, value: $0, to: currentWeekStart) } }
     private var selectedItems: [LocalPlanDay] { history.plannedDays.filter { Calendar.current.isDate($0.scheduleDate, inSameDayAs: selectedDay) }.sorted { $0.scheduleDate < $1.scheduleDate } }
     private var availableWeekStarts: [Date] {
-        Array(
-            Set(history.plannedDays.map { WeeklyPlanGenerator.startOfMonday(for: $0.scheduleDate) } + [currentWeekStart])
-        ).sorted()
+        let calendar = Calendar.current
+        let plannedWeeks = history.plannedDays.map { WeeklyPlanGenerator.startOfMonday(for: $0.scheduleDate) }
+        guard let completedAt = history.baseline?.completedAt else {
+            return Array(Set(plannedWeeks + [currentWeekStart])).sorted()
+        }
+        let firstWeek = WeeklyPlanGenerator.startOfMonday(for: completedAt)
+        let maximumWeek = calendar.date(byAdding: .day, value: 11 * 7, to: firstWeek) ?? firstWeek
+        let currentProgramWeek = WeeklyPlanGenerator.startOfMonday(for: .now)
+        let latestKnownWeek = min(maximumWeek, max(currentProgramWeek, plannedWeeks.max() ?? firstWeek))
+        var programWeeks: [Date] = []
+        var cursor = firstWeek
+        while cursor <= latestKnownWeek {
+            programWeeks.append(cursor)
+            guard let next = calendar.date(byAdding: .day, value: 7, to: cursor) else { break }
+            cursor = next
+        }
+        return Array(Set(programWeeks + plannedWeeks.filter { $0 <= maximumWeek } + [currentWeekStart])).sorted()
     }
     private var previousAvailableWeek: Date? { availableWeekStarts.last { $0 < currentWeekStart } }
     private var nextAvailableWeek: Date? { availableWeekStarts.first { $0 > currentWeekStart } }
@@ -524,7 +600,9 @@ struct TempoProgramScreen: View {
             Text("Program").font(TempoDesign.Typography.display)
             Text("Pilih hari untuk melihat waktu, alasan, status, dan penyesuaian rencana.")
                 .foregroundStyle(TempoDesign.Palette.textSecondary)
-            TempoStatusBadge("\(currentWeekStart.formatted(.dateTime.month(.wide).year())) · Minggu \(max(1, history.programWeek))", tone: .accent)
+            TempoStatusBadge("\(currentWeekStart.formatted(.dateTime.month(.wide).year())) · Minggu \(displayedProgramWeek)", tone: .accent)
+                .accessibilityIdentifier("program.week.badge")
+                .accessibilityValue("Minggu \(displayedProgramWeek)")
         }
     }
 
@@ -605,6 +683,7 @@ struct TempoProgramScreen: View {
                     icon: tempoActivityIcon(item.effectiveKind),
                     tint: tempoPlanStatusTone(item.status).color
                 ) { coordinator.open(.plan(item.id)) }
+                .accessibilityIdentifier(planAccessibilityIdentifier(item))
             }
         }
     }
@@ -627,6 +706,16 @@ struct TempoProgramScreen: View {
         let offset = Calendar.current.dateComponents([.day], from: currentWeekStart, to: selectedDay).day ?? 0
         selectedDay = Calendar.current.date(byAdding: .day, value: min(6, max(0, offset)), to: weekStart) ?? weekStart
     }
+
+    private func planAccessibilityIdentifier(_ item: LocalPlanDay) -> String {
+        if item.rescheduledFromID != nil { return "program.plan.replacement" }
+        if item.status == .skipped,
+           let reasons = item.adaptationReasonCodes,
+           reasons.contains(PlanReason.postponed.rawValue) || reasons.contains(PlanReason.safeReschedule.rawValue) {
+            return "program.plan.postponedSource"
+        }
+        return "program.plan.actionable"
+    }
 }
 
 struct TempoPlanDetailScreen: View {
@@ -646,6 +735,10 @@ struct TempoPlanDetailScreen: View {
                         Image(systemName: tempoActivityIcon(item.effectiveKind)).font(.system(size: 38, weight: .semibold)).foregroundStyle(TempoDesign.Palette.accentSoft)
                         Text(tempoActivityName(item.effectiveKind)).font(TempoDesign.Typography.pageTitle)
                         TempoStatusBadge(tempoPlanStatusTitle(item.status), tone: tempoPlanStatusTone(item.status))
+                        if item.rescheduledFromID != nil {
+                            TempoStatusBadge("Pengganti penundaan", tone: .accent, icon: "arrow.triangle.swap")
+                                .accessibilityIdentifier("plan.detail.replacement")
+                        }
                         TempoSurfaceCard {
                             VStack(alignment: .leading, spacing: TempoDesign.Spacing.sm) {
                                 detailRow("Waktu", item.scheduleDate.formatted(date: .abbreviated, time: .shortened))
@@ -670,8 +763,9 @@ struct TempoPlanDetailScreen: View {
                                 if history.markPlanUnavailable(id: item.id) { dismiss() } else { actionFailed = true }
                             }
                             TempoSecondaryButton("Tunda dengan aman", icon: "arrow.right.circle", tone: .accent) {
-                                if history.postponePlan(id: item.id) { dismiss() } else { actionFailed = true }
+                                showReplacementAfterPostponing(item)
                             }
+                            .accessibilityIdentifier("plan.detail.postpone")
                         }
                     }
                     .frame(maxWidth: TempoDesign.readableContentWidth, alignment: .leading)
@@ -706,5 +800,20 @@ struct TempoPlanDetailScreen: View {
         case .education: coordinator.open(.lesson(item.id, "Kesadaran sebelum intensitas"))
         case .review: coordinator.open(.weeklyReview)
         }
+    }
+
+    private func showReplacementAfterPostponing(_ source: LocalPlanDay) {
+        guard history.postponePlan(id: source.id) else {
+            actionFailed = true
+            return
+        }
+        guard let replacement = history.plannedDays.first(where: { $0.rescheduledFromID == source.id }) else {
+            dismiss()
+            return
+        }
+        // Replace the source detail rather than leaving users to infer where
+        // the safely deferred activity went in the calendar.
+        if !coordinator.path.isEmpty { coordinator.path.removeLast() }
+        coordinator.open(.plan(replacement.id))
     }
 }

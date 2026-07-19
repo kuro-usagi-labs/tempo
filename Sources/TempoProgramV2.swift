@@ -7,7 +7,7 @@ public struct RulesetVersion: RawRepresentable, Codable, Equatable, Hashable, Se
 
     public init(rawValue: String) { self.rawValue = rawValue }
 
-    public static let current = RulesetVersion(rawValue: "2.0.2")
+    public static let current = RulesetVersion(rawValue: "2.1.2")
 
     public static func < (lhs: RulesetVersion, rhs: RulesetVersion) -> Bool {
         lhs.rawValue.compare(rhs.rawValue, options: .numeric) == .orderedAscending
@@ -191,6 +191,49 @@ public struct ProgramPlanItem: Identifiable, Codable, Equatable, Sendable {
             reasons: mergedReasons
         )
         return copy
+    }
+}
+
+/// The compact symptom choice stored with a daily readiness check-in.  The
+/// value identifies the reported category; whether it is still unresolved is
+/// recorded separately on `DailyReadinessRecord` so a clear health recheck can
+/// retain the historical category without leaving a permanent safety lock.
+public enum DailySymptomType: String, Codable, CaseIterable, Hashable, Sendable {
+    case none
+    case mildIrritation
+    case pain
+    case urinaryOrDischarge
+    case bloodOrFever
+
+    public var requiresSafetyHold: Bool { self != .none }
+
+    public var safetySeverity: RecommendationSeverity? {
+        switch self {
+        case .none: nil
+        case .mildIrritation: .caution
+        case .pain, .urinaryOrDischarge: .medical
+        case .bloodOrFever: .urgent
+        }
+    }
+
+    public var safetyReasonCode: String? {
+        switch self {
+        case .none: nil
+        case .mildIrritation: "safety.daily-readiness-irritation"
+        case .pain: "safety.daily-readiness-pain"
+        case .urinaryOrDischarge: "safety.daily-readiness-urinary-discharge"
+        case .bloodOrFever: "safety.daily-readiness-blood-fever"
+        }
+    }
+
+    public var displayName: String {
+        switch self {
+        case .none: "Tidak ada keluhan"
+        case .mildIrritation: "Iritasi ringan"
+        case .pain: "Nyeri"
+        case .urinaryOrDischarge: "Perih saat kencing atau cairan tidak biasa"
+        case .bloodOrFever: "Darah atau demam"
+        }
     }
 }
 
@@ -624,11 +667,41 @@ public struct ProgramScheduleHistory: Equatable, Sendable {
     public var guidedSessionDates: [Date]
     public var privateSessionDates: [Date]
     public var scheduledGuidedDates: [Date]
+    /// When true, `guidedSessionDates` and `scheduledGuidedDates` represent
+    /// the complete known local history. In that case a projected rolling
+    /// count must use those dates instead of a stale aggregate from today.
+    public var hasCompleteGuidedHistory: Bool
 
-    public init(guidedSessionDates: [Date] = [], privateSessionDates: [Date] = [], scheduledGuidedDates: [Date] = []) {
+    public init(
+        guidedSessionDates: [Date] = [],
+        privateSessionDates: [Date] = [],
+        scheduledGuidedDates: [Date] = [],
+        hasCompleteGuidedHistory: Bool = false
+    ) {
         self.guidedSessionDates = guidedSessionDates
         self.privateSessionDates = privateSessionDates
         self.scheduledGuidedDates = scheduledGuidedDates
+        self.hasCompleteGuidedHistory = hasCompleteGuidedHistory
+    }
+}
+
+/// Separates the program week being viewed in the calendar from the actual
+/// week used by progression. Navigating never mutates program state.
+public struct ProgramWeekCalculator: Sendable {
+    public init() {}
+
+    public func displayedWeek(
+        baselineCompletedAt: Date?,
+        weekStarting: Date,
+        calendar: Calendar = Calendar(identifier: .gregorian),
+        maximumWeek: Int = 12
+    ) -> Int {
+        guard let baselineCompletedAt else { return 1 }
+        let baselineWeek = WeeklyPlanGenerator.startOfMonday(for: baselineCompletedAt, calendar: calendar)
+        let displayedWeek = WeeklyPlanGenerator.startOfMonday(for: weekStarting, calendar: calendar)
+        let days = calendar.dateComponents([.day], from: baselineWeek, to: displayedWeek).day ?? 0
+        let week = days / 7 + 1
+        return min(max(1, maximumWeek), max(1, week))
     }
 }
 
@@ -731,27 +804,299 @@ public struct ProgramEngine: Sendable {
     }
 }
 
-public struct AdaptationPolicy: Sendable {
+public enum ScheduleConstraint: String, CaseIterable, Hashable, Sendable {
+    case sourceNotActionable
+    case sourceAlreadyRescheduled
+    case duplicateReplacement
+    case candidateBeforeEarliest
+    case safetyHold
+    case privateRecoveryWindow
+    case guidedSpacing
+    case guidedWeeklyLimit
+    case demandingActivity
+    case reviewDay
+    case exerciseRestriction
+    case unsafeActivitySpace
+    case duplicateActivity
+    case guidedIneligible
+}
+
+public struct ScheduleEvaluation: Equatable, Sendable {
+    public let blockers: Set<ScheduleConstraint>
+
+    public init(blockers: Set<ScheduleConstraint> = []) {
+        self.blockers = blockers
+    }
+
+    public var isAllowed: Bool { blockers.isEmpty }
+}
+
+/// Shared, deterministic scheduling gate. Manual postponement, missed-guided
+/// recovery, and future adaptive moves must ask this same evaluator before a
+/// replacement is created.
+public struct ScheduleConstraintEvaluator: Sendable {
     public static let minimumGuidedSpacing: TimeInterval = 48 * 3_600
     public static let privateRecoveryWindow: TimeInterval = 24 * 3_600
     public static let maximumGuidedSessionsPerSevenDays = 3
+
+    public init() {}
+
+    public func evaluate(
+        source: ProgramPlanItem,
+        candidate: Date,
+        items: [ProgramPlanItem],
+        scheduleHistory: ProgramScheduleHistory,
+        context: ProgramContext,
+        now: Date,
+        earliestDate: Date? = nil,
+        calendar: Calendar = Calendar(identifier: .gregorian)
+    ) -> ScheduleEvaluation {
+        var blockers = Set<ScheduleConstraint>()
+        let earliest = earliestDate ?? now
+
+        if !source.status.isActionable { blockers.insert(.sourceNotActionable) }
+        if source.adaptation?.rescheduledFromID != nil { blockers.insert(.sourceAlreadyRescheduled) }
+        if candidate <= earliest { blockers.insert(.candidateBeforeEarliest) }
+        if context.hasSafetyHold { blockers.insert(.safetyHold) }
+        if items.contains(where: { $0.id != source.id && $0.adaptation?.rescheduledFromID == source.id }) {
+            blockers.insert(.duplicateReplacement)
+        }
+
+        let otherItems = items.filter { $0.id != source.id }
+        let sameDay = otherItems.filter { calendar.isDate($0.scheduledAt, inSameDayAs: candidate) && $0.status != .skipped }
+        if sameDay.contains(where: { $0.status.isActionable && $0.effectiveKind == source.effectiveKind }) {
+            blockers.insert(.duplicateActivity)
+        }
+        if sameDay.contains(where: { $0.effectiveKind == .review }) && source.effectiveKind != .review {
+            blockers.insert(.reviewDay)
+        }
+
+        switch source.effectiveKind {
+        case .guided:
+            if sameDay.contains(where: { [.guided, .cardio, .strength].contains($0.effectiveKind) }) {
+                blockers.insert(.demandingActivity)
+            }
+            let guided = guidedDates(
+                excluding: source,
+                items: items,
+                scheduleHistory: scheduleHistory,
+                context: context,
+                referenceDate: now
+            )
+            let privateDates = privateDates(scheduleHistory: scheduleHistory, context: context, referenceDate: now)
+            if guided.dates.contains(where: { abs($0.timeIntervalSince(candidate)) < Self.minimumGuidedSpacing }) {
+                blockers.insert(.guidedSpacing)
+            }
+            if privateDates.contains(where: { $0 < candidate && candidate.timeIntervalSince($0) < Self.privateRecoveryWindow }) {
+                blockers.insert(.privateRecoveryWindow)
+            }
+            let projectedCount = projectedGuidedCount(
+                dates: guided.dates,
+                hasConcreteDates: guided.hasConcreteDates,
+                candidate: candidate,
+                fallback: context.guidedSessionsLast7Days,
+                historyIsComplete: scheduleHistory.hasCompleteGuidedHistory
+            )
+            if projectedCount >= Self.maximumGuidedSessionsPerSevenDays {
+                blockers.insert(.guidedWeeklyLimit)
+            }
+            var projectedContext = context
+            projectedContext.readinessIsCurrent = false
+            projectedContext.anxiety = 5
+            projectedContext.sleepHours = nil
+            projectedContext.energyToday = nil
+            projectedContext.hoursSinceLastGuidedSession = projectedHours(since: guided.dates, at: candidate)
+            projectedContext.hoursSinceLastPrivateSession = projectedHours(since: privateDates, at: candidate)
+            projectedContext.guidedSessionsLast7Days = projectedCount
+            if !EligibilityEngine().guidedEligibility(for: projectedContext).isAllowed {
+                blockers.insert(.guidedIneligible)
+            }
+
+        case .cardio, .strength:
+            if context.exerciseRestricted { blockers.insert(.exerciseRestriction) }
+            if source.effectiveKind == .strength && !context.hasSafeActivitySpace {
+                blockers.insert(.unsafeActivitySpace)
+            }
+            if sameDay.contains(where: { [.guided, .cardio, .strength].contains($0.effectiveKind) }) {
+                blockers.insert(.demandingActivity)
+            }
+
+        case .breathing, .education, .recovery, .review:
+            break
+        }
+
+        return ScheduleEvaluation(blockers: blockers)
+    }
+
+    public func firstAllowedDate(
+        for source: ProgramPlanItem,
+        after earliestDate: Date,
+        items: [ProgramPlanItem],
+        scheduleHistory: ProgramScheduleHistory,
+        context: ProgramContext,
+        now: Date,
+        horizonDays: Int = 6,
+        calendar: Calendar = Calendar(identifier: .gregorian)
+    ) -> Date? {
+        let day = calendar.startOfDay(for: earliestDate)
+        let time = calendar.dateComponents([.hour, .minute], from: source.scheduledAt)
+        for offset in 1...max(1, horizonDays) {
+            guard let candidateDay = calendar.date(byAdding: .day, value: offset, to: day) else { continue }
+            let candidate = calendar.date(
+                bySettingHour: time.hour ?? 18,
+                minute: time.minute ?? 0,
+                second: 0,
+                of: candidateDay
+            ) ?? candidateDay
+            let evaluation = evaluate(
+                source: source,
+                candidate: candidate,
+                items: items,
+                scheduleHistory: scheduleHistory,
+                context: context,
+                now: now,
+                earliestDate: earliestDate,
+                calendar: calendar
+            )
+            if evaluation.isAllowed { return candidate }
+        }
+        return nil
+    }
+
+    private func guidedDates(
+        excluding source: ProgramPlanItem,
+        items: [ProgramPlanItem],
+        scheduleHistory: ProgramScheduleHistory,
+        context: ProgramContext,
+        referenceDate: Date
+    ) -> (dates: [Date], hasConcreteDates: Bool) {
+        var dates = scheduleHistory.guidedSessionDates + scheduleHistory.scheduledGuidedDates
+        // A caller may supply the source's old scheduled date in the legacy
+        // date-only history. Remove one exact match only: it is the source,
+        // while a genuinely separate same-time plan row remains a conflict.
+        if source.effectiveKind == .guided,
+           source.status.isActionable,
+           let sourceIndex = dates.firstIndex(where: { abs($0.timeIntervalSince(source.scheduledAt)) < 1 }) {
+            dates.remove(at: sourceIndex)
+        }
+        for item in items where item.id != source.id && item.effectiveKind == .guided {
+            switch item.status {
+            case .skipped, .recovery:
+                continue
+            case .completed:
+                if !scheduleHistory.hasCompleteGuidedHistory,
+                   item.execution?.performedKind == .guided {
+                    dates.append(item.execution?.completedAt ?? item.scheduledAt)
+                }
+            case .scheduled, .adapted:
+                dates.append(item.scheduledAt)
+            }
+        }
+        let hasConcreteDates = !dates.isEmpty
+        if dates.isEmpty, !scheduleHistory.hasCompleteGuidedHistory,
+           let hours = context.hoursSinceLastGuidedSession {
+            dates.append(referenceDate.addingTimeInterval(-hours * 3_600))
+        }
+        return (deduplicatedDates(dates), hasConcreteDates)
+    }
+
+    private func privateDates(
+        scheduleHistory: ProgramScheduleHistory,
+        context: ProgramContext,
+        referenceDate: Date
+    ) -> [Date] {
+        var dates = scheduleHistory.privateSessionDates
+        if dates.isEmpty, let hours = context.hoursSinceLastPrivateSession {
+            dates.append(referenceDate.addingTimeInterval(-hours * 3_600))
+        }
+        return deduplicatedDates(dates)
+    }
+
+    private func projectedGuidedCount(
+        dates: [Date],
+        hasConcreteDates: Bool,
+        candidate: Date,
+        fallback: Int,
+        historyIsComplete: Bool
+    ) -> Int {
+        let windowStart = candidate.addingTimeInterval(-7 * 86_400)
+        let concreteCount = dates.filter { $0 >= windowStart && $0 < candidate }.count
+        // Concrete dates describe the candidate's rolling window. The current
+        // aggregate is only useful when no dated history is available at all.
+        if historyIsComplete { return concreteCount }
+        // Partial dates cannot prove that the current aggregate is lower. A
+        // complete local history, above, is the only case allowed to replace
+        // the aggregate with a lower candidate-window count.
+        if !hasConcreteDates { return max(0, fallback) }
+        return max(max(0, fallback), concreteCount)
+    }
+
+    private func projectedHours(since dates: [Date], at date: Date) -> Double? {
+        guard let latest = dates.filter({ $0 < date }).max() else { return nil }
+        return max(0, date.timeIntervalSince(latest) / 3_600)
+    }
+
+    private func deduplicatedDates(_ dates: [Date]) -> [Date] {
+        let sorted = dates.sorted()
+        var unique: [Date] = []
+        for date in sorted {
+            if let previous = unique.last, abs(date.timeIntervalSince(previous)) < 1 {
+                continue
+            }
+            unique.append(date)
+        }
+        return unique
+    }
+}
+
+public struct AdaptationPolicy: Sendable {
+    public static let minimumGuidedSpacing = ScheduleConstraintEvaluator.minimumGuidedSpacing
+    public static let privateRecoveryWindow = ScheduleConstraintEvaluator.privateRecoveryWindow
+    public static let maximumGuidedSessionsPerSevenDays = ScheduleConstraintEvaluator.maximumGuidedSessionsPerSevenDays
     public static let automaticGuidedRescheduleHorizonDays = 6
     public static let maximumMissedGuidedAge: TimeInterval = 48 * 3_600
 
-    public init() {}
+    private let constraints: ScheduleConstraintEvaluator
+
+    public init(constraints: ScheduleConstraintEvaluator = ScheduleConstraintEvaluator()) {
+        self.constraints = constraints
+    }
 
     public func adaptUnavailable(_ item: ProgramPlanItem, at date: Date) -> ProgramPlanItem {
         item.adapted(to: .recovery, reasons: [.unavailable], at: date)
     }
 
+    /// Retained for source compatibility. New callers should use
+    /// `manualReschedule` so the terminal source and linked replacement are
+    /// persisted together after shared constraint evaluation.
     public func postpone(_ item: ProgramPlanItem, to date: Date) -> ProgramPlanItem {
         item.adapted(to: item.effectiveKind, reasons: [.postponed, .safeReschedule], at: date, rescheduledFromID: item.id)
     }
 
+    public func manualReschedule(
+        _ item: ProgramPlanItem,
+        now: Date,
+        items: [ProgramPlanItem],
+        scheduleHistory: ProgramScheduleHistory = ProgramScheduleHistory(),
+        context: ProgramContext,
+        calendar: Calendar = Calendar(identifier: .gregorian)
+    ) -> AutomaticGuidedReschedule? {
+        let earliest = max(now, item.scheduledAt)
+        guard let target = constraints.firstAllowedDate(
+            for: item,
+            after: earliest,
+            items: items,
+            scheduleHistory: scheduleHistory,
+            context: context,
+            now: now,
+            calendar: calendar
+        ) else { return nil }
+        return reschedulePair(item, target: target, at: now, reasons: [.postponed, .safeReschedule])
+    }
+
     /// Produces the two records that must be persisted together when an
     /// untouched guided activity has passed. It deliberately returns `nil`
-    /// rather than relaxing any safety condition. Use `resolveMissedGuided`
-    /// when the caller also needs the terminal skipped-source fallback.
+    /// rather than relaxing any safety condition.
     public func automaticRescheduleMissedGuided(
         _ item: ProgramPlanItem,
         now: Date,
@@ -768,28 +1113,7 @@ public struct AdaptationPolicy: Sendable {
             context: context,
             calendar: calendar
         ) else { return nil }
-
-        let reasons: [PlanReason] = [.missedActivity, .safeReschedule]
-        let skippedSource = item.skipped(reasons: reasons, at: now)
-        let rescheduledItem = ProgramPlanItem(
-            id: automaticRescheduleID(sourceID: item.id, scheduledAt: target),
-            scheduledAt: target,
-            prescribedKind: item.prescribedKind,
-            estimatedMinutes: item.estimatedMinutes,
-            phase: item.phase,
-            reasons: item.reasons,
-            rulesetVersion: item.rulesetVersion,
-            revision: item.revision + 1,
-            status: .adapted,
-            adaptation: PlanAdaptation(
-                adaptedAt: now,
-                originalKind: item.prescribedKind,
-                replacementKind: .guided,
-                reasons: reasons,
-                rescheduledFromID: item.id
-            )
-        )
-        return AutomaticGuidedReschedule(skippedSource: skippedSource, rescheduledItem: rescheduledItem)
+        return reschedulePair(item, target: target, at: now, reasons: [.missedActivity, .safeReschedule])
     }
 
     /// Resolves a recently missed guided item in one explicit result. Callers
@@ -817,10 +1141,6 @@ public struct AdaptationPolicy: Sendable {
         return .skipped(item.skipped(reasons: [.missedActivity], at: now))
     }
 
-    /// Finds a candidate for a missed guided activity without mutating a
-    /// plan. The target is always a future day at the original time and must
-    /// preserve 48-hour guided spacing, the 24-hour private recovery window,
-    /// and the three-guided-sessions-per-seven-days cap.
     public func safeAutomaticGuidedRescheduleDate(
         for item: ProgramPlanItem,
         after now: Date,
@@ -830,84 +1150,36 @@ public struct AdaptationPolicy: Sendable {
         calendar: Calendar = Calendar(identifier: .gregorian)
     ) -> Date? {
         guard isAutomaticallyReschedulableMissedGuided(item, now: now, context: context) else { return nil }
-
-        let guidedDates = knownGuidedDates(
+        return constraints.firstAllowedDate(
+            for: item,
+            after: now,
             items: items,
             scheduleHistory: scheduleHistory,
             context: context,
-            referenceDate: now,
-            excluding: item.id
+            now: now,
+            horizonDays: Self.automaticGuidedRescheduleHorizonDays,
+            calendar: calendar
         )
-        let privateDates = knownPrivateDates(scheduleHistory: scheduleHistory, context: context, referenceDate: now)
-        let startOfTomorrow = calendar.startOfDay(for: now)
-        let time = calendar.dateComponents([.hour, .minute], from: item.scheduledAt)
-
-        for offset in 1...Self.automaticGuidedRescheduleHorizonDays {
-            guard let candidateDay = calendar.date(byAdding: .day, value: offset, to: startOfTomorrow) else { continue }
-            let candidate = calendar.date(
-                bySettingHour: time.hour ?? 18,
-                minute: time.minute ?? 0,
-                second: 0,
-                of: candidateDay
-            ) ?? candidateDay
-
-            let hasDemandingActivity = items.contains { other in
-                other.id != item.id &&
-                    other.status.isActionable &&
-                    calendar.isDate(other.scheduledAt, inSameDayAs: candidate) &&
-                    [.cardio, .strength, .guided].contains(other.effectiveKind)
-            }
-            guard !hasDemandingActivity else { continue }
-            let isReviewDay = items.contains { other in
-                other.id != item.id &&
-                    calendar.isDate(other.scheduledAt, inSameDayAs: candidate) &&
-                    other.effectiveKind == .review
-            }
-            guard !isReviewDay else { continue }
-            guard !guidedDates.contains(where: { abs($0.timeIntervalSince(candidate)) < Self.minimumGuidedSpacing }) else { continue }
-            guard !privateDates.contains(where: { $0 < candidate && candidate.timeIntervalSince($0) < Self.privateRecoveryWindow }) else { continue }
-
-            var projectedContext = context
-            // A missed activity is rescheduled using the projected date, not a
-            // baseline sleep/anxiety answer or today's temporary readiness.
-            projectedContext.readinessIsCurrent = false
-            projectedContext.anxiety = 5
-            projectedContext.sleepHours = nil
-            projectedContext.energyToday = nil
-            projectedContext.hoursSinceLastGuidedSession = projectedHours(since: guidedDates, at: candidate)
-            projectedContext.hoursSinceLastPrivateSession = projectedHours(since: privateDates, at: candidate)
-            let windowStart = candidate.addingTimeInterval(-7 * 86_400)
-            let knownGuidedCount = guidedDates.filter { $0 >= windowStart && $0 < candidate }.count
-            // The supplied aggregate is intentionally a conservative lower
-            // bound when a caller cannot supply every historical date.
-            projectedContext.guidedSessionsLast7Days = max(knownGuidedCount, context.guidedSessionsLast7Days)
-
-            guard projectedContext.guidedSessionsLast7Days < Self.maximumGuidedSessionsPerSevenDays,
-                  EligibilityEngine().guidedEligibility(for: projectedContext).isAllowed
-            else { continue }
-            return candidate
-        }
-        return nil
     }
 
-    public func safeRescheduleDate(for item: ProgramPlanItem, after date: Date, items: [ProgramPlanItem], calendar: Calendar = Calendar(identifier: .gregorian)) -> Date? {
-        let day = calendar.startOfDay(for: date)
-        let scheduledTime = calendar.dateComponents([.hour, .minute], from: item.scheduledAt)
-        for offset in 1...6 {
-            guard let candidateDay = calendar.date(byAdding: .day, value: offset, to: day) else { continue }
-            let candidateAtScheduledTime = calendar.date(
-                bySettingHour: scheduledTime.hour ?? 18,
-                minute: scheduledTime.minute ?? 0,
-                second: 0,
-                of: candidateDay
-            ) ?? candidateDay
-            if item.effectiveKind != .guided { return candidateAtScheduledTime }
-            let isTooClose = items.contains { other in
-                other.id != item.id && other.effectiveKind == .guided && abs(other.scheduledAt.timeIntervalSince(candidateAtScheduledTime)) < 48 * 3_600
-            }
-            if !isTooClose { return candidateAtScheduledTime }
-        }
-        return nil
+    public func safeRescheduleDate(
+        for item: ProgramPlanItem,
+        after date: Date,
+        items: [ProgramPlanItem],
+        scheduleHistory: ProgramScheduleHistory = ProgramScheduleHistory(),
+        context: ProgramContext? = nil,
+        calendar: Calendar = Calendar(identifier: .gregorian)
+    ) -> Date? {
+        let resolvedContext = context ?? ProgramContext(phase: item.phase, baselineCompleted: true)
+        return constraints.firstAllowedDate(
+            for: item,
+            after: max(date, item.scheduledAt),
+            items: items,
+            scheduleHistory: scheduleHistory,
+            context: resolvedContext,
+            now: date,
+            calendar: calendar
+        )
     }
 
     public func shouldRescheduleMissed(_ item: ProgramPlanItem, now: Date, items: [ProgramPlanItem], calendar: Calendar = Calendar(identifier: .gregorian)) -> Bool {
@@ -928,35 +1200,36 @@ public struct AdaptationPolicy: Sendable {
         return true
     }
 
-    private func knownGuidedDates(
-        items: [ProgramPlanItem],
-        scheduleHistory: ProgramScheduleHistory,
-        context: ProgramContext,
-        referenceDate: Date,
-        excluding excludedID: UUID
-    ) -> [Date] {
-        let itemDates = items.compactMap { item -> Date? in
-            guard item.id != excludedID, item.effectiveKind == .guided else { return nil }
-            if let execution = item.execution {
-                return execution.performedKind == .guided ? execution.completedAt : nil
-            }
-            return item.status.isActionable || item.status == .completed ? item.scheduledAt : nil
-        }
-        let inferred = context.hoursSinceLastGuidedSession.map { referenceDate.addingTimeInterval(-$0 * 3_600) }
-        return Array(Set(scheduleHistory.guidedSessionDates + scheduleHistory.scheduledGuidedDates + itemDates + (inferred.map { [$0] } ?? []))).sorted()
+    private func reschedulePair(
+        _ item: ProgramPlanItem,
+        target: Date,
+        at now: Date,
+        reasons: [PlanReason]
+    ) -> AutomaticGuidedReschedule {
+        let skippedSource = item.skipped(reasons: reasons, at: now)
+        let replacementKind = item.effectiveKind
+        let replacement = ProgramPlanItem(
+            id: rescheduleID(sourceID: item.id, scheduledAt: target),
+            scheduledAt: target,
+            prescribedKind: item.prescribedKind,
+            estimatedMinutes: item.estimatedMinutes,
+            phase: item.phase,
+            reasons: item.reasons,
+            rulesetVersion: item.rulesetVersion,
+            revision: item.revision + 1,
+            status: replacementKind == .recovery ? .recovery : .adapted,
+            adaptation: PlanAdaptation(
+                adaptedAt: now,
+                originalKind: item.adaptation?.originalKind ?? item.prescribedKind,
+                replacementKind: replacementKind,
+                reasons: reasons,
+                rescheduledFromID: item.id
+            )
+        )
+        return AutomaticGuidedReschedule(skippedSource: skippedSource, rescheduledItem: replacement)
     }
 
-    private func knownPrivateDates(scheduleHistory: ProgramScheduleHistory, context: ProgramContext, referenceDate: Date) -> [Date] {
-        let inferred = context.hoursSinceLastPrivateSession.map { referenceDate.addingTimeInterval(-$0 * 3_600) }
-        return Array(Set(scheduleHistory.privateSessionDates + (inferred.map { [$0] } ?? []))).sorted()
-    }
-
-    private func projectedHours(since dates: [Date], at date: Date) -> Double? {
-        guard let latest = dates.filter({ $0 < date }).max() else { return nil }
-        return max(0, date.timeIntervalSince(latest) / 3_600)
-    }
-
-    private func automaticRescheduleID(sourceID: UUID, scheduledAt: Date) -> UUID {
+    private func rescheduleID(sourceID: UUID, scheduledAt: Date) -> UUID {
         let source = sourceID.uuidString.replacingOccurrences(of: "-", with: "")
         let timestamp = String(format: "%016llx", UInt64(max(0, scheduledAt.timeIntervalSince1970.rounded())))
         let hex = String(source.prefix(16)) + timestamp
@@ -980,9 +1253,39 @@ public struct ProgressEngine: Sendable {
     }
 
     public func consistency(for items: [ProgramPlanItem], through date: Date, calendar: Calendar = Calendar(identifier: .gregorian)) -> Double? {
-        let due = items.filter { $0.scheduledAt <= date && $0.status != .recovery }
-        guard !due.isEmpty else { return nil }
-        let done = due.filter { $0.status == .completed }.count
-        return Double(done) / Double(due.count)
+        let due = items.filter { $0.scheduledAt <= date && countsTowardConsistency($0) }
+        let uniqueDue = deduplicatedReplacements(in: due)
+        guard !uniqueDue.isEmpty else { return nil }
+        let done = uniqueDue.filter { $0.status == .completed }.count
+        return Double(done) / Double(uniqueDue.count)
+    }
+
+    private func countsTowardConsistency(_ item: ProgramPlanItem) -> Bool {
+        if item.status == .recovery { return false }
+        if item.effectiveKind == .recovery { return item.status == .completed }
+        let reasons = Set(item.adaptation?.reasons ?? [])
+        let safelyExcused: Set<PlanReason> = [.postponed, .safeReschedule, .unavailable, .safetyHold]
+        if item.status == .skipped && !reasons.isDisjoint(with: safelyExcused) { return false }
+        return true
+    }
+
+    /// Historical data may contain more than one replacement for the same
+    /// source from older builds. Count only the best known child so a source
+    /// and replacement can never depress (or inflate) consistency twice.
+    private func deduplicatedReplacements(in items: [ProgramPlanItem]) -> [ProgramPlanItem] {
+        let direct = items.filter { $0.adaptation?.rescheduledFromID == nil }
+        let children = Dictionary(grouping: items.compactMap { item -> (UUID, ProgramPlanItem)? in
+            guard let sourceID = item.adaptation?.rescheduledFromID else { return nil }
+            return (sourceID, item)
+        }, by: { $0.0 })
+        let canonicalChildren = children.values.compactMap { group -> ProgramPlanItem? in
+            group.map { $0.1 }.sorted { lhs, rhs in
+                if (lhs.status == .completed) != (rhs.status == .completed) {
+                    return lhs.status == .completed
+                }
+                return lhs.scheduledAt < rhs.scheduledAt
+            }.first
+        }
+        return direct + canonicalChildren
     }
 }

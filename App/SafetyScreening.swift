@@ -25,15 +25,6 @@ struct SafetyScreeningAnswers: Equatable {
         return "safety.clear"
     }
 
-    func apply(to context: inout DecisionContext) {
-        context.pain = severeOrPelvicPain || acuteInjury
-        context.pelvicOrTesticularPain = severeOrPelvicPain
-        context.bloodReported = bloodOrFever
-        context.fever = bloodOrFever
-        context.urinaryBurning = urinaryOrDischarge
-        context.unusualDischarge = urinaryOrDischarge
-        context.irritation = mildIrritation
-    }
 }
 
 struct SafetyScreeningFields: View {

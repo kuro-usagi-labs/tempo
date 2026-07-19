@@ -37,5 +37,5 @@ struct TempoApp: App {
         _history = State(initialValue: LocalHistory())
     }
 
-    var body: some Scene { WindowGroup { RootView().environment(history).preferredColorScheme(.dark) } }
+    var body: some Scene { WindowGroup { TempoV2AppShell().environment(history).preferredColorScheme(.dark) } }
 }
