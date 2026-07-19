@@ -436,11 +436,21 @@ struct TempoHealthCheckScreen: View {
             }
             Section("Tanda keselamatan") {
                 SafetyScreeningFields(answers: $answers)
-                Toggle("Saya sudah membaca dan menjawab semua bagian", isOn: $confirmedComplete)
-                    .accessibilityIdentifier("health.check.confirmed")
+                confirmationButton(
+                    "Saya sudah membaca dan menjawab semua bagian",
+                    isConfirmed: confirmedComplete,
+                    identifier: "health.check.confirmed"
+                ) {
+                    confirmedComplete.toggle()
+                }
                 if requiresMedicalResolutionConfirmation && !hasSymptoms {
-                    Toggle("Gejala sudah hilang atau dinilai tenaga kesehatan", isOn: $confirmedMedicalFollowUp)
-                        .accessibilityIdentifier("health.check.medicalFollowUp")
+                    confirmationButton(
+                        "Gejala sudah hilang atau dinilai tenaga kesehatan",
+                        isConfirmed: confirmedMedicalFollowUp,
+                        identifier: "health.check.medicalFollowUp"
+                    ) {
+                        confirmedMedicalFollowUp.toggle()
+                    }
                 }
             }
             Section {
@@ -472,6 +482,30 @@ struct TempoHealthCheckScreen: View {
         if normalized.contains("irritation") { return "Iritasi pernah dilaporkan. Beri tubuh waktu pulih dan lakukan pemeriksaan ulang." }
         if normalized.contains("pain") || normalized.contains("symptom") { return "Nyeri atau gejala fisik baru pernah dilaporkan. Aktivitas tetap dijeda sampai pemeriksaan ulang aman." }
         return "Safety hold aktif yang tersimpan masih memerlukan pemeriksaan ulang sebelum sesi dapat dimulai."
+    }
+
+    private func confirmationButton(
+        _ title: String,
+        isConfirmed: Bool,
+        identifier: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(alignment: .firstTextBaseline, spacing: TempoDesign.Spacing.sm) {
+                Image(systemName: isConfirmed ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundStyle(isConfirmed ? TempoDesign.Palette.accentSoft : TempoDesign.Palette.textSecondary)
+                    .accessibilityHidden(true)
+                Text(title)
+                    .foregroundStyle(TempoDesign.Palette.textPrimary)
+                Spacer(minLength: TempoDesign.Spacing.sm)
+            }
+        }
+        .buttonStyle(TempoTactileButtonStyle())
+        .accessibilityIdentifier(identifier)
+        .accessibilityLabel(title)
+        .accessibilityValue(isConfirmed ? "Dikonfirmasi" : "Belum dikonfirmasi")
+        .accessibilityAddTraits(isConfirmed ? .isSelected : [])
     }
 
     private func save() {

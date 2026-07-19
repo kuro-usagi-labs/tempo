@@ -78,8 +78,8 @@ final class TempoUITests: XCTestCase {
         tapIdentified("today.readiness.save")
 
         XCTAssertTrue(identifiedElement("health.check").waitForExistence(timeout: 5))
-        turnOnSwitch("health.check.confirmed")
-        turnOnSwitch("health.check.medicalFollowUp")
+        tapIdentifiedButton("health.check.confirmed")
+        tapIdentifiedButton("health.check.medicalFollowUp")
         tapIdentifiedButton("health.check.submit")
 
         XCTAssertTrue(app.tabBars.buttons["Hari Ini"].waitForExistence(timeout: 5))
@@ -239,23 +239,6 @@ final class TempoUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter().wait(for: [enabled], timeout: 5), .completed)
         XCTAssertTrue(button.isHittable)
         button.tap()
-    }
-
-    /// A safety confirmation is meaningful only when the concrete switch is
-    /// tapped. The subsequent enabled-state wait on the submit button verifies
-    /// that SwiftUI has incorporated both confirmations.
-    private func turnOnSwitch(_ identifier: String) {
-        let control = app.switches[identifier]
-        for _ in 0..<3 {
-            if control.waitForExistence(timeout: 1), control.isHittable { break }
-            app.swipeUp()
-        }
-        XCTAssertTrue(control.waitForExistence(timeout: 5))
-        XCTAssertTrue(control.isHittable)
-        // The test starts from a clean launch where both confirmation toggles
-        // are off. Keeping the operation explicit avoids relying on an
-        // implementation-specific accessibility value representation.
-        control.tap()
     }
 
     private func tapNavigationBarButton(_ label: String) {
