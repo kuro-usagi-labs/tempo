@@ -50,6 +50,103 @@ final class TempoDomainTests: XCTestCase {
         }
     }
 
+    func testActiveUrgentOrMedicalHoldRoutesEveryChoiceToHealthCheck() {
+        for severity in [RecommendationSeverity.urgent, .medical] {
+            for choice in ImmediateActionChoice.allCases {
+                let result = ImmediateActionRouter().route(ImmediateActionRequest(
+                    choice: choice,
+                    intensity: 7,
+                    hasActiveSafetyHold: true,
+                    activeSafetyHoldSeverity: severity,
+                    activeSafetyHoldReason: severity == .urgent ? "safety.urgent" : "safety.urinary"
+                ))
+                XCTAssertEqual(result.destination, .healthCheck)
+                XCTAssertEqual(result.activeSafetyHoldSeverity, severity)
+            }
+        }
+    }
+
+    func testActiveIrritationHoldRoutesToRecoveryBlockWithoutResetBypass() {
+        let recheck = Date.now.addingTimeInterval(6 * 3_600)
+        for choice in ImmediateActionChoice.allCases {
+            let result = ImmediateActionRouter().route(ImmediateActionRequest(
+                choice: choice,
+                intensity: 6,
+                hasActiveSafetyHold: true,
+                activeSafetyHoldSeverity: .caution,
+                activeSafetyHoldReason: "safety.post-session-irritation",
+                activeSafetyHoldRecheckDate: recheck
+            ))
+            XCTAssertEqual(result.destination, .recoveryBlocked)
+            XCTAssertEqual(result.activeSafetyHoldRecheckDate, recheck)
+        }
+    }
+
+    func testExpiredUnresolvedIrritationHoldRequiresHealthCheck() {
+        let result = ImmediateActionRouter().route(ImmediateActionRequest(
+            choice: .privateSession,
+            intensity: 6,
+            hasActiveSafetyHold: true,
+            activeSafetyHoldSeverity: .caution,
+            activeSafetyHoldReason: "safety.irritation",
+            activeSafetyHoldRecheckDate: Date.now.addingTimeInterval(-1)
+        ))
+        XCTAssertEqual(result.destination, .healthCheck)
+    }
+
+    func testResolvedHoldReturnsToNormalRouting() {
+        let result = ImmediateActionRouter().route(ImmediateActionRequest(
+            choice: .privateSession,
+            intensity: 8,
+            hasActiveSafetyHold: false,
+            activeSafetyHoldSeverity: .medical,
+            activeSafetyHoldReason: "safety.urinary"
+        ))
+        XCTAssertEqual(result.destination, .privateSession)
+    }
+
+    func testPrivateCycleIsRecordedWhenRecoveryQualifiesBeforeFinish() {
+        var tracker = PrivateSessionCycleTracker()
+        tracker.beginRecovery(reason: .manual, assistanceEnabled: true)
+        XCTAssertTrue(tracker.qualifyRecovery(elapsedSeconds: 30, intensity: 4, minimumRecoverySeconds: 30))
+        // Ending from recovery preserves this completed count for saving.
+        XCTAssertEqual(tracker.completedCycles, 1)
+    }
+
+    func testPrivateQualifiedRecoveryDoesNotDoubleCountWhenResuming() {
+        var tracker = PrivateSessionCycleTracker()
+        tracker.beginRecovery(reason: .threshold, assistanceEnabled: true)
+        XCTAssertTrue(tracker.qualifyRecovery(elapsedSeconds: 30, intensity: 4, minimumRecoverySeconds: 30))
+        tracker.resumeActivePhase()
+        XCTAssertFalse(tracker.qualifyRecovery(elapsedSeconds: 60, intensity: 3, minimumRecoverySeconds: 30))
+        XCTAssertEqual(tracker.completedCycles, 1)
+    }
+
+    func testPrivateRecoveryNeedsMinimumDurationAndSafeIntensity() {
+        var tracker = PrivateSessionCycleTracker()
+        tracker.beginRecovery(reason: .manual, assistanceEnabled: true)
+        XCTAssertFalse(tracker.qualifyRecovery(elapsedSeconds: 29, intensity: 4, minimumRecoverySeconds: 30))
+        XCTAssertFalse(tracker.qualifyRecovery(elapsedSeconds: 30, intensity: 5, minimumRecoverySeconds: 30))
+        XCTAssertEqual(tracker.completedCycles, 0)
+    }
+
+    func testPrivateInterruptionDoesNotCountAsCycle() {
+        var tracker = PrivateSessionCycleTracker()
+        tracker.beginRecovery(reason: .interruption, assistanceEnabled: true)
+        XCTAssertFalse(tracker.qualifyRecovery(elapsedSeconds: 60, intensity: 3, minimumRecoverySeconds: 30))
+        XCTAssertEqual(tracker.completedCycles, 0)
+    }
+
+    func testPrivateEmergencyCanCountAfterQualifiedRecoveryAndTwoCyclesAccumulate() {
+        var tracker = PrivateSessionCycleTracker()
+        tracker.beginRecovery(reason: .emergency, assistanceEnabled: false)
+        XCTAssertTrue(tracker.qualifyRecovery(elapsedSeconds: 30, intensity: 4, minimumRecoverySeconds: 30))
+        tracker.resumeActivePhase()
+        tracker.beginRecovery(reason: .threshold, assistanceEnabled: true)
+        XCTAssertTrue(tracker.qualifyRecovery(elapsedSeconds: 30, intensity: 3, minimumRecoverySeconds: 30))
+        XCTAssertEqual(tracker.completedCycles, 2)
+    }
+
     func testUrgentSymptomsBlockGuidedTraining() {
         var context = DecisionContext()
         context.intent = .training
@@ -475,6 +572,197 @@ final class TempoDomainTests: XCTestCase {
         XCTAssertTrue(adapted.reasons.contains(.highAnxiety))
         XCTAssertTrue(adapted.reasons.contains(.lowSleep))
         XCTAssertTrue(adapted.reasons.contains(.lateStopAdaptation))
+    }
+
+    func testActivityPreferenceUsesAllExplicitOnboardingChoicesAndSafeLegacyFallback() {
+        let choices: [(String, ActivityPreference)] = [
+            ("Jalan santai", .walking),
+            ("Jalan–jogging", .walkJog),
+            ("Latihan kekuatan di rumah", .homeStrength),
+            ("Latihan napas dan mobilitas", .breathingAndMobility),
+            ("Tidak punya preferensi", .noPreference)
+        ]
+
+        XCTAssertEqual(Set(choices.map { $0.1 }), Set(ActivityPreference.allCases))
+        for (label, preference) in choices {
+            XCTAssertEqual(preference.legacyDisplayValue, label)
+            XCTAssertEqual(ActivityPreference(legacyValue: label), Optional(preference))
+        }
+        XCTAssertEqual(ActivityPreference(legacyValue: "Sepeda"), Optional(.noPreference))
+    }
+
+    func testActivityPreferenceChangesOnlySafeCompatiblePlanSlots() {
+        let calendar = utcCalendar
+        let monday = date(2026, 7, 13, hour: 9, calendar: calendar)
+        let generator = WeeklyPlanGenerator()
+
+        let breathingPlan = generator.generate(
+            weekStarting: monday,
+            weeks: 1,
+            context: ProgramContext(phase: .awareness, baselineCompleted: true, activityPreference: .breathingAndMobility),
+            referenceDate: monday,
+            calendar: calendar
+        )
+        let saturday = breathingPlan.first { calendar.component(.weekday, from: $0.scheduledAt) == 7 }
+        XCTAssertEqual(saturday?.prescribedKind, .cardio)
+        XCTAssertEqual(saturday?.effectiveKind, .breathing)
+        XCTAssertTrue(saturday?.adaptation?.reasons.contains(.preferredActivity) == true)
+
+        let homeStrengthPlan = generator.generate(
+            weekStarting: monday,
+            weeks: 1,
+            context: ProgramContext(phase: .awareness, baselineCompleted: true, activityPreference: .homeStrength),
+            referenceDate: monday,
+            calendar: calendar
+        )
+        let tuesday = homeStrengthPlan.first { calendar.component(.weekday, from: $0.scheduledAt) == 3 }
+        XCTAssertEqual(tuesday?.effectiveKind, .strength)
+        XCTAssertTrue(tuesday?.adaptation?.reasons.contains(.preferredActivity) == true)
+
+        let noSafeSpacePlan = generator.generate(
+            weekStarting: monday,
+            weeks: 1,
+            context: ProgramContext(phase: .awareness, baselineCompleted: true, hasSafeActivitySpace: false, activityPreference: .homeStrength),
+            referenceDate: monday,
+            calendar: calendar
+        )
+        XCTAssertEqual(noSafeSpacePlan.first { calendar.component(.weekday, from: $0.scheduledAt) == 3 }?.effectiveKind, .cardio)
+    }
+
+    func testWalkJogPreferenceUsesIntervalsOnlyWhenPhaseAndDifficultyAreSafe() {
+        let engine = ExercisePrescriptionEngine()
+        let safe = engine.prescription(
+            for: .cardio,
+            context: ProgramContext(phase: .stability, baselineCompleted: true, activityPreference: .walkJog),
+            recentDifficulty: 5
+        )
+        XCTAssertEqual(safe?.mode, .walkJog)
+
+        let earlyPhase = engine.prescription(
+            for: .cardio,
+            context: ProgramContext(phase: .awareness, baselineCompleted: true, activityPreference: .walkJog),
+            recentDifficulty: 1
+        )
+        let explicitWalking = engine.prescription(
+            for: .cardio,
+            context: ProgramContext(phase: .stability, baselineCompleted: true, activityPreference: .walking),
+            recentDifficulty: 1
+        )
+        let neutral = engine.prescription(
+            for: .cardio,
+            context: ProgramContext(phase: .stability, baselineCompleted: true, activityPreference: .noPreference),
+            recentDifficulty: 1
+        )
+        XCTAssertEqual(earlyPhase?.mode, .walk)
+        XCTAssertEqual(explicitWalking?.mode, .walk)
+        XCTAssertEqual(neutral?.mode, .walkJog)
+    }
+
+    func testBaselineReadinessDoesNotRewriteTodayWithoutCurrentReadiness() {
+        let calendar = utcCalendar
+        let monday = date(2026, 7, 13, hour: 9, calendar: calendar)
+        let generator = WeeklyPlanGenerator()
+        let baselineOnly = ProgramContext(phase: .awareness, baselineCompleted: true, anxiety: 5, sleepHours: 4)
+        let currentReadiness = ProgramContext(phase: .awareness, baselineCompleted: true, anxiety: 5, sleepHours: 4, readinessIsCurrent: true)
+
+        let baselinePlan = generator.generate(weekStarting: monday, weeks: 1, context: baselineOnly, referenceDate: monday, calendar: calendar)
+        let currentPlan = generator.generate(weekStarting: monday, weeks: 1, context: currentReadiness, referenceDate: monday, calendar: calendar)
+        let mondayBaseline = baselinePlan.first { calendar.component(.weekday, from: $0.scheduledAt) == 2 }
+        let mondayCurrent = currentPlan.first { calendar.component(.weekday, from: $0.scheduledAt) == 2 }
+
+        XCTAssertEqual(mondayBaseline?.effectiveKind, .guided)
+        XCTAssertEqual(mondayCurrent?.effectiveKind, .recovery)
+        XCTAssertTrue(mondayCurrent?.adaptation?.reasons.contains(.lowSleep) == true)
+
+        let anxiousToday = ProgramContext(phase: .awareness, baselineCompleted: true, anxiety: 9, readinessIsCurrent: true)
+        let anxietyPlan = generator.generate(weekStarting: monday, weeks: 1, context: anxiousToday, referenceDate: monday, calendar: calendar)
+        XCTAssertEqual(anxietyPlan.first { calendar.component(.weekday, from: $0.scheduledAt) == 2 }?.effectiveKind, .breathing)
+        XCTAssertEqual(anxietyPlan.first { calendar.component(.weekday, from: $0.scheduledAt) == 5 }?.effectiveKind, .guided)
+    }
+
+    func testLowEnergyOnlyAdaptsTheCurrentReadinessDay() {
+        let calendar = utcCalendar
+        let monday = date(2026, 7, 13, hour: 9, calendar: calendar)
+        let generator = WeeklyPlanGenerator()
+        let staleEstimate = ProgramContext(
+            phase: .awareness,
+            baselineCompleted: true,
+            energyToday: 2
+        )
+        let currentReadiness = ProgramContext(
+            phase: .awareness,
+            baselineCompleted: true,
+            energyToday: 2,
+            readinessIsCurrent: true
+        )
+
+        let stalePlan = generator.generate(weekStarting: monday, weeks: 1, context: staleEstimate, referenceDate: monday, calendar: calendar)
+        let currentPlan = generator.generate(weekStarting: monday, weeks: 1, context: currentReadiness, referenceDate: monday, calendar: calendar)
+
+        XCTAssertEqual(stalePlan.first?.effectiveKind, .guided)
+        XCTAssertEqual(currentPlan.first?.effectiveKind, .recovery)
+        XCTAssertTrue(currentPlan.first?.adaptation?.reasons.contains(.lowEnergy) == true)
+        XCTAssertEqual(PlanActivityResolver().resolve(.cardio, context: currentReadiness).kind, .recovery)
+    }
+
+    func testAutomaticMissedGuidedReschedulePreservesSpacingAndAvoidsDemandingDays() {
+        let calendar = utcCalendar
+        let source = planItem(scheduledAt: date(2026, 7, 13, hour: 18, minute: 30, calendar: calendar), kind: .guided)
+        let now = date(2026, 7, 14, hour: 8, calendar: calendar)
+        let existingGuided = planItem(scheduledAt: date(2026, 7, 16, hour: 18, minute: 30, calendar: calendar), kind: .guided)
+        let demandingTuesday = planItem(scheduledAt: date(2026, 7, 14, hour: 18, calendar: calendar), kind: .cardio)
+        let breathingWednesday = planItem(scheduledAt: date(2026, 7, 15, hour: 21, calendar: calendar), kind: .breathing)
+        let strengthFriday = planItem(scheduledAt: date(2026, 7, 17, hour: 18, calendar: calendar), kind: .strength)
+        let cardioSaturday = planItem(scheduledAt: date(2026, 7, 18, hour: 9, calendar: calendar), kind: .cardio)
+        let reviewSunday = planItem(scheduledAt: date(2026, 7, 19, hour: 19, minute: 30, calendar: calendar), kind: .review)
+        let items = [source, demandingTuesday, breathingWednesday, existingGuided, strengthFriday, cardioSaturday, reviewSunday]
+        let context = ProgramContext(phase: .awareness, baselineCompleted: true)
+        let policy = AdaptationPolicy()
+
+        guard let result = policy.automaticRescheduleMissedGuided(source, now: now, items: items, context: context, calendar: calendar) else {
+            return XCTFail("Expected a safe guided replacement")
+        }
+        XCTAssertEqual(result.skippedSource.status, .skipped)
+        XCTAssertTrue(result.skippedSource.adaptation?.reasons.contains(.missedActivity) == true)
+        XCTAssertEqual(result.rescheduledItem.scheduledAt, date(2026, 7, 20, hour: 18, minute: 30, calendar: calendar))
+        XCTAssertEqual(result.rescheduledItem.adaptation?.rescheduledFromID, source.id)
+        XCTAssertGreaterThanOrEqual(result.rescheduledItem.scheduledAt.timeIntervalSince(existingGuided.scheduledAt), AdaptationPolicy.minimumGuidedSpacing)
+        XCTAssertEqual(Optional(result), policy.automaticRescheduleMissedGuided(source, now: now, items: items, context: context, calendar: calendar))
+    }
+
+    func testAutomaticMissedGuidedRescheduleWaitsForPrivateRecovery() {
+        let calendar = utcCalendar
+        let source = planItem(scheduledAt: date(2026, 7, 13, hour: 18, minute: 30, calendar: calendar), kind: .guided)
+        let now = date(2026, 7, 14, hour: 8, calendar: calendar)
+        let privateSession = date(2026, 7, 14, hour: 20, calendar: calendar)
+        let result = AdaptationPolicy().automaticRescheduleMissedGuided(
+            source,
+            now: now,
+            items: [source],
+            scheduleHistory: ProgramScheduleHistory(privateSessionDates: [privateSession]),
+            context: ProgramContext(phase: .awareness, baselineCompleted: true),
+            calendar: calendar
+        )
+
+        XCTAssertEqual(result?.rescheduledItem.scheduledAt, date(2026, 7, 16, hour: 18, minute: 30, calendar: calendar))
+    }
+
+    func testMissedGuidedResolutionSkipsWhenNoSafeSlotAndNeverRepeats() {
+        let calendar = utcCalendar
+        let source = planItem(scheduledAt: date(2026, 7, 13, hour: 18, minute: 30, calendar: calendar), kind: .guided)
+        let now = date(2026, 7, 14, hour: 8, calendar: calendar)
+        let blockers = (1...AdaptationPolicy.automaticGuidedRescheduleHorizonDays).map { offset in
+            planItem(scheduledAt: calendar.date(byAdding: .day, value: offset, to: now)!, kind: offset.isMultiple(of: 2) ? .cardio : .strength)
+        }
+        let policy = AdaptationPolicy()
+        let context = ProgramContext(phase: .awareness, baselineCompleted: true)
+
+        guard case let .skipped(skipped)? = policy.resolveMissedGuided(source, now: now, items: [source] + blockers, context: context, calendar: calendar) else {
+            return XCTFail("Unsafe catch-up should leave only a skipped source")
+        }
+        XCTAssertEqual(skipped.status, .skipped)
+        XCTAssertNil(policy.resolveMissedGuided(skipped, now: now, items: [skipped] + blockers, context: context, calendar: calendar))
+        XCTAssertNil(policy.resolveMissedGuided(source, now: now.addingTimeInterval(49 * 3_600), items: [source] + blockers, context: context, calendar: calendar))
     }
 
     func testAdaptationPolicyMaintainsFortyEightHourGuidedSpacing() {

@@ -141,6 +141,8 @@ struct TempoImmediateActionScreen: View {
         case .reset: intent = .calm
         case .guided: intent = .training
         }
+        let activeHold = history.activeSafetyHold
+        let activeHoldSeverity = activeHold.flatMap { RecommendationSeverity(rawValue: $0.severity) }
         let request = ImmediateActionRequest(
             choice: choice,
             intensity: intensity,
@@ -150,13 +152,26 @@ struct TempoImmediateActionScreen: View {
             hoursSinceLastPrivateSession: history.hoursSinceLastPrivateSession,
             guidedSessionsLast7Days: history.guidedSessionsLast7Days,
             guidedEligibility: history.guidedEligibility,
-            hasPhysicalSymptoms: symptomReported
+            hasCurrentPhysicalSymptoms: symptomReported,
+            hasActiveSafetyHold: history.hasSafetyBlock,
+            activeSafetyHoldSeverity: activeHoldSeverity ?? (history.hasSafetyBlock ? .medical : nil),
+            activeSafetyHoldReason: activeHold?.reasonCode ?? (history.hasSafetyBlock ? "safety.pending-write" : nil),
+            activeSafetyHoldRecheckDate: activeHold?.recheckNotBefore
         )
         let result = ImmediateActionRouter().route(request)
         let recommendation: Recommendation
         switch result.destination {
         case .healthCheck:
-            recommendation = Recommendation(.healthCheck, .urgent, "safety.immediate-symptoms", "Gejala fisik perlu diperiksa sebelum melanjutkan.", blocked: true)
+            let currentSymptoms = request.hasCurrentPhysicalSymptoms
+            recommendation = Recommendation(
+                .healthCheck,
+                result.activeSafetyHoldSeverity ?? .urgent,
+                currentSymptoms ? "safety.immediate-symptoms" : "immediate.active-safety-hold",
+                currentSymptoms ? "Gejala fisik perlu diperiksa sebelum melanjutkan." : "Safety hold aktif masih memerlukan pemeriksaan ulang.",
+                blocked: true
+            )
+        case .recoveryBlocked:
+            recommendation = Recommendation(.recovery, .caution, "immediate.active-irritation-hold", "Masa pemulihan iritasi masih aktif.", blocked: true)
         case .privateSession:
             recommendation = Recommendation(.privateSession, result.advisories.isEmpty ? .normal : .caution, "immediate.private", "Sesi privat dipilih secara langsung.")
         case .guided:
@@ -169,6 +184,8 @@ struct TempoImmediateActionScreen: View {
         guard history.add(intensity: intensity, trigger: .desire, intent: intent, recommendation: recommendation) else { saveFailed = true; return }
         switch result.destination {
         case .healthCheck: replaceWith(.healthCheck)
+        case .recoveryBlocked:
+            replaceWith(.safetyRecoveryBlock(result.activeSafetyHoldReason, result.activeSafetyHoldRecheckDate))
         case .privateSession: replaceWith(.privateSession(result.advisories))
         case .guided: replaceWith(.guided(nil))
         case .guidedUnavailable:
@@ -202,8 +219,12 @@ struct TempoGuidedUnavailableScreen: View {
             if let nextAvailableAt {
                 TempoStatusBadge("Tersedia kembali sekitar \(nextAvailableAt.formatted(date: .abbreviated, time: .shortened))", tone: .neutral, icon: "calendar")
             }
-            TempoPrimaryButton("Pilih sesi privat", icon: "hand.raised.fill") { coordinator.open(.privateSession([])) }
-            TempoSecondaryButton("Reset lima menit", icon: "wind", tone: .caution) { coordinator.open(.breathing(nil, "Reset lima menit", 300)) }
+            if reason == .safetyHold {
+                TempoPrimaryButton("Buka pemeriksaan", icon: "cross.case.fill") { coordinator.open(.healthCheck) }
+            } else {
+                TempoPrimaryButton("Pilih sesi privat", icon: "hand.raised.fill") { coordinator.open(.privateSession([])) }
+                TempoSecondaryButton("Reset lima menit", icon: "wind", tone: .caution) { coordinator.open(.breathing(nil, "Reset lima menit", 300)) }
+            }
             TempoSecondaryButton("Kembali", icon: "chevron.left", tone: .neutral) { dismiss() }
             Spacer()
         }
@@ -212,6 +233,55 @@ struct TempoGuidedUnavailableScreen: View {
         .background(TempoDesign.Palette.canvas.ignoresSafeArea())
         .navigationBarBackButtonHidden()
         .accessibilityIdentifier("guided.unavailable")
+    }
+}
+
+/// A mild irritation hold is a recovery window, not an invitation to start a
+/// different kind of session. This route deliberately contains no reset or
+/// private-session shortcut.
+struct TempoSafetyRecoveryBlockScreen: View {
+    let reason: String?
+    let recheckDate: Date?
+    @Environment(TempoCoordinator.self) private var coordinator
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: TempoDesign.Spacing.lg) {
+            Spacer()
+            Image(systemName: "leaf.circle.fill")
+                .font(.system(size: 54, weight: .semibold))
+                .foregroundStyle(TempoDesign.Palette.caution)
+            Text("Masa pemulihan masih aktif")
+                .font(TempoDesign.Typography.pageTitle)
+                .multilineTextAlignment(.center)
+            Text(reasonMessage)
+                .foregroundStyle(TempoDesign.Palette.textSecondary)
+                .multilineTextAlignment(.center)
+            if let recheckDate {
+                TempoStatusBadge(
+                    recheckDate > .now
+                        ? "Periksa ulang sekitar \(recheckDate.formatted(date: .abbreviated, time: .shortened))"
+                        : "Waktu pemulihan telah tiba — lakukan pemeriksaan ulang sebelum melanjutkan.",
+                    tone: .neutral,
+                    icon: "calendar"
+                )
+            }
+            TempoPrimaryButton("Buka pemeriksaan", icon: "cross.case.fill") { coordinator.open(.healthCheck) }
+            TempoSecondaryButton("Kembali", icon: "chevron.left", tone: .neutral) { dismiss() }
+            Spacer()
+        }
+        .padding(TempoDesign.Spacing.lg)
+        .frame(maxWidth: TempoDesign.readableContentWidth, maxHeight: .infinity)
+        .background(TempoDesign.Palette.canvas.ignoresSafeArea())
+        .navigationBarBackButtonHidden()
+        .accessibilityIdentifier("safety.recovery.blocked")
+    }
+
+    private var reasonMessage: String {
+        guard let reason, reason.localizedCaseInsensitiveContains("irritation") else {
+            return "Tubuh masih membutuhkan pemulihan sebelum sesi dapat dimulai."
+        }
+        return "Iritasi ringan sebelumnya masih dalam masa pemulihan. Hindari memulai sesi sampai pemeriksaan ulang aman."
     }
 }
 
@@ -228,7 +298,9 @@ struct TempoIntensitySelector: View {
                         Text("\(level)").font(TempoDesign.Typography.cardTitle).frame(maxWidth: .infinity, minHeight: 44)
                             .foregroundStyle(value == level ? Color.white : TempoDesign.Palette.textPrimary)
                             .background(value == level ? accent : TempoDesign.Palette.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    }.buttonStyle(TempoTactileButtonStyle())
+                    }
+                    .buttonStyle(TempoTactileButtonStyle())
+                    .accessibilityIdentifier("intensity.level.\(level)")
                 }
             }
         }
@@ -255,8 +327,10 @@ struct TempoPrivateSessionTimerScreen: View {
     @State private var currentRecoverySeconds = 0
     @State private var totalSessionSeconds = 0
     @State private var manualPauseCount = 0
+    @State private var thresholdPauseCount = 0
     @State private var emergencyPauseCount = 0
-    @State private var completedCycles = 0
+    @State private var interruptionPauseCount = 0
+    @State private var cycleTracker = PrivateSessionCycleTracker()
     @State private var intensity = 3
     @State private var saveDetails = false
     @State private var outcome = "Lebih tenang"
@@ -266,6 +340,7 @@ struct TempoPrivateSessionTimerScreen: View {
     @State private var painAfter = false
     @State private var irritationAfter = false
     @State private var saveFailed = false
+    @State private var warningReason: PrivatePauseReason?
     @State private var warningTask: Task<Void, Never>?
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -301,10 +376,11 @@ struct TempoPrivateSessionTimerScreen: View {
         .toolbar(.hidden, for: .navigationBar)
         .onReceive(ticker) { _ in tick() }
         .onChange(of: scenePhase) { _, newPhase in
-            if newPhase != .active, phase == .active, assistanceEnabled { enterWarning(emergency: false) }
+            if newPhase != .active { interruptionPause() }
         }
         .onChange(of: intensity) { _, value in
-            if assistanceEnabled, phase == .active, value >= prescription.pauseThreshold { enterWarning(emergency: false) }
+            if assistanceEnabled, phase == .active, value >= prescription.pauseThreshold { thresholdPause() }
+            qualifyCurrentCycleIfNeeded()
         }
         .onDisappear { warningTask?.cancel(); speaker.stopSpeaking(at: .immediate) }
         .alert("Sesi belum tersimpan", isPresented: $saveFailed) { Button("Coba lagi") { save() } } message: { Text("Pemulihan tidak akan dijadwalkan ulang sampai catatan lokal berhasil disimpan.") }
@@ -337,7 +413,7 @@ struct TempoPrivateSessionTimerScreen: View {
         case .active:
             VStack(spacing: TempoDesign.Spacing.md) {
                 if assistanceEnabled {
-                    TempoStatusBadge("Siklus \(completedCycles + 1) · ambang \(prescription.pauseThreshold)/10", tone: .accent)
+                    TempoStatusBadge("Siklus \(cycleTracker.completedCycles + 1) · ambang \(prescription.pauseThreshold)/10", tone: .accent)
                     TempoIntensitySelector(value: $intensity, accent: intensity >= prescription.pauseThreshold - 1 ? TempoDesign.Palette.caution : TempoDesign.Palette.accentSoft)
                 }
                 TempoPrimaryButton(assistanceEnabled ? "Jeda sekarang" : "Jeda", icon: "pause.fill") { manualPause() }
@@ -349,12 +425,16 @@ struct TempoPrivateSessionTimerScreen: View {
         case .recovery:
             VStack(spacing: TempoDesign.Spacing.md) {
                 Text("Pulih \(tempoDuration(currentRecoverySeconds))").font(TempoDesign.Typography.sectionTitle).monospacedDigit()
-                Text("Total pemulihan \(tempoDuration(totalRecoverySeconds)) · \(completedCycles) siklus").font(TempoDesign.Typography.caption).foregroundStyle(TempoDesign.Palette.textSecondary)
+                Text("Total pemulihan \(tempoDuration(totalRecoverySeconds)) · \(cycleTracker.completedCycles) siklus").font(TempoDesign.Typography.caption).foregroundStyle(TempoDesign.Palette.textSecondary)
+                if cycleTracker.recoveryQualified {
+                    TempoStatusBadge("Siklus ini siap disimpan", tone: .positive, icon: "checkmark.circle.fill")
+                }
                 TempoIntensitySelector(value: $intensity, accent: TempoDesign.Palette.positive)
                 TempoPrimaryButton(canResume ? "Lanjutkan dengan pelan" : "Tunggu hingga siap", icon: "play.fill") { resumeFromRecovery() }
                     .disabled(!canResume)
                 TempoSecondaryButton("Cukup untuk hari ini", icon: "checkmark", tone: .positive) { phase = .reflection }
             }
+            .accessibilityIdentifier("private.recovery")
         case .paused:
             VStack(spacing: TempoDesign.Spacing.sm) {
                 TempoPrimaryButton("Lanjut bila siap", icon: "play.fill") { phase = .active }
@@ -386,11 +466,15 @@ struct TempoPrivateSessionTimerScreen: View {
     private var warningContent: some View {
         VStack(spacing: TempoDesign.Spacing.lg) {
             Image(systemName: "hand.raised.fill").font(.system(size: 76, weight: .bold)).foregroundStyle(.white)
-            Text("STOP — LEPAS TANGAN").font(.system(size: 31, weight: .black, design: .rounded)).foregroundStyle(.white).multilineTextAlignment(.center)
+            Text(warningReason == .emergency ? "DARURAT — BERHENTI SEKARANG" : "STOP — LEPAS TANGAN")
+                .font(.system(size: 31, weight: .black, design: .rounded))
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, minHeight: 440)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Stop. Lepas tangan.")
+        .accessibilityIdentifier("private.pause.warning")
     }
 
     private var message: String {
@@ -398,7 +482,10 @@ struct TempoPrivateSessionTimerScreen: View {
         case .ready: "Pilih apakah TEMPO membantu mengatur jeda. Kamu tetap memegang keputusan sesi."
         case .active: assistanceEnabled ? "Perbarui intensitas dengan satu tangan. TEMPO akan menghentikan siklus di ambang program." : "Timer berjalan. Jeda dan akhiri kapan pun dibutuhkan."
         case .warning: ""
-        case .recovery: canResume ? "Pemulihan minimum terpenuhi dan intensitas sudah turun." : "Lanjut hanya setelah waktu minimum selesai dan intensitas maksimal 4."
+        case .recovery:
+            cycleTracker.recoveryQualified
+                ? "Siklus ini sudah tercatat. Kamu dapat melanjutkan dengan pelan atau cukup untuk hari ini."
+                : (canResume ? "Pemulihan minimum terpenuhi dan intensitas sudah turun." : "Lanjut hanya setelah waktu minimum selesai dan intensitas maksimal 4.")
         case .paused: "Timer aktif berhenti selama jeda."
         case .reflection: "Catat hasil secukupnya agar jadwal pemulihan berikutnya akurat."
         case .saved: ""
@@ -406,7 +493,9 @@ struct TempoPrivateSessionTimerScreen: View {
     }
 
     private func tick() {
-        guard scenePhase == .active, startedAt != nil, ![.ready, .reflection, .saved].contains(phase) else { return }
+        guard scenePhase == .active,
+              startedAt != nil,
+              ![.ready, .paused, .reflection, .saved].contains(phase) else { return }
         totalSessionSeconds += 1
         switch phase {
         case .active:
@@ -424,6 +513,7 @@ struct TempoPrivateSessionTimerScreen: View {
         case .recovery:
             currentRecoverySeconds += 1
             totalRecoverySeconds += 1
+            qualifyCurrentCycleIfNeeded()
         default: break
         }
     }
@@ -435,50 +525,80 @@ struct TempoPrivateSessionTimerScreen: View {
     }
 
     private func manualPause() {
-        manualPauseCount += 1
-        if assistanceEnabled { enterWarning(emergency: false) }
-        else { phase = .paused; if hapticsEnabled { TempoFeedback.impact(.light) } }
-    }
-
-    /// With assistance disabled, this remains a user-controlled pause rather
-    /// than silently switching the session into the assisted recovery flow.
-    /// The emergency signal is still retained for the post-session record.
-    private func emergencyPause() {
         guard phase == .active else { return }
-        emergencyPauseCount += 1
-        tooFast = true
+        manualPauseCount += 1
         if assistanceEnabled {
-            enterWarning(emergency: true, alreadyRecorded: true)
+            beginRecovery(for: .manual)
         } else {
             phase = .paused
             if hapticsEnabled { TempoFeedback.impact(.light) }
         }
     }
 
-    private func enterWarning(emergency: Bool, alreadyRecorded: Bool = false) {
+    private func emergencyPause() {
         guard phase == .active else { return }
-        if emergency {
-            if !alreadyRecorded { emergencyPauseCount += 1 }
-            tooFast = true
-        }
+        emergencyPauseCount += 1
+        tooFast = true
+        enterWarning(for: .emergency)
+    }
+
+    private func thresholdPause() {
+        guard phase == .active else { return }
+        thresholdPauseCount += 1
+        enterWarning(for: .threshold)
+    }
+
+    private func interruptionPause() {
+        guard phase == .active else { return }
+        interruptionPauseCount += 1
+        beginRecovery(for: .interruption)
+    }
+
+    /// Threshold and emergency pauses deliberately use a short warning state;
+    /// manual and interruption pauses never use this red treatment.
+    private func enterWarning(for reason: PrivatePauseReason) {
+        guard phase == .active else { return }
+        warningReason = reason
         phase = .warning
-        if hapticsEnabled { TempoFeedback.notification(.warning) }
+        if hapticsEnabled { TempoFeedback.notification(reason == .emergency ? .error : .warning) }
         speak("Stop. Lepas tangan.")
         warningTask?.cancel()
         warningTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(1))
             guard !Task.isCancelled, phase == .warning else { return }
-            currentRecoverySeconds = 0
-            phase = .recovery
+            beginRecovery(for: reason)
+        }
+    }
+
+    private func beginRecovery(for reason: PrivatePauseReason) {
+        guard phase == .active || phase == .warning else { return }
+        warningReason = nil
+        currentRecoverySeconds = 0
+        cycleTracker.beginRecovery(reason: reason, assistanceEnabled: assistanceEnabled)
+        // A regular non-assisted pause and an app interruption are never a
+        // completed training cycle. Emergency remains eligible when a real
+        // recovery is completed, even though it is marked as too fast.
+        phase = .recovery
+        if hapticsEnabled, (reason == .manual || reason == .interruption) { TempoFeedback.impact(.medium) }
+    }
+
+    private func qualifyCurrentCycleIfNeeded() {
+        guard phase == .recovery else { return }
+        if cycleTracker.qualifyRecovery(
+            elapsedSeconds: currentRecoverySeconds,
+            intensity: intensity,
+            minimumRecoverySeconds: prescription.recoverySeconds
+        ), hapticsEnabled {
+            TempoFeedback.notification(.success)
         }
     }
 
     private func resumeFromRecovery() {
         guard canResume else { return }
-        completedCycles += 1
         currentRecoverySeconds = 0
+        cycleTracker.resumeActivePhase()
         phase = .active
-        if hapticsEnabled { TempoFeedback.notification(.success) }
+        if hapticsEnabled { TempoFeedback.impact(.light) }
     }
 
     private func speak(_ text: String) {
@@ -499,7 +619,7 @@ struct TempoPrivateSessionTimerScreen: View {
         guard history.addPrivateSession(
             startedAt: startedAt,
             elapsedSeconds: totalSessionSeconds,
-            pauseCount: manualPauseCount + emergencyPauseCount,
+            pauseCount: manualPauseCount + thresholdPauseCount + emergencyPauseCount + interruptionPauseCount,
             outcome: outcome,
             note: note.isEmpty ? nil : note,
             saveDetails: saveDetails,
@@ -507,13 +627,15 @@ struct TempoPrivateSessionTimerScreen: View {
             totalRecoverySeconds: totalRecoverySeconds,
             manualPauseCount: manualPauseCount,
             emergencyPauseCount: emergencyPauseCount,
-            completedCycles: completedCycles,
+            completedCycles: cycleTracker.completedCycles,
             terminalState: stoppedIntentionally ? "intentional-stop" : "ended",
             assistanceEnabled: assistanceEnabled,
             tooFast: tooFast,
             stoppedIntentionally: stoppedIntentionally,
             painAfter: painAfter,
-            irritationAfter: irritationAfter
+            irritationAfter: irritationAfter,
+            thresholdPauseCount: thresholdPauseCount,
+            interruptionPauseCount: interruptionPauseCount
         ) else { saveFailed = true; return }
         phase = .saved
         if painAfter || irritationAfter { coordinator.open(.healthCheck) } else { dismiss() }
@@ -567,7 +689,7 @@ struct TempoGuidedSessionScreen: View {
                 else if showReflection { reflection }
                 else { stateContent }
                 Spacer(minLength: 0)
-                if eligibilityMessage == nil && !showReflection { footer }
+                if eligibilityMessage == nil && !showReflection && !machine.isTerminal { footer }
             }
             .frame(maxWidth: TempoDesign.readableContentWidth, maxHeight: .infinity)
             .padding(TempoDesign.Spacing.lg)
@@ -745,6 +867,7 @@ struct TempoGuidedSessionScreen: View {
             Spacer()
             Text("Target: \(machine.maximumCycles) jeda").font(TempoDesign.Typography.caption).foregroundStyle(TempoDesign.Palette.textTertiary)
         }
+        .accessibilityIdentifier("guided.footer")
     }
 
     private var reflection: some View {

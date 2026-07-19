@@ -28,6 +28,49 @@ final class TempoDomainTests: XCTestCase {
         XCTAssertEqual(ImmediateActionRouter().route(ImmediateActionRequest(choice: .privateSession, intensity: 5, hasPhysicalSymptoms: true)).destination, .healthCheck)
     }
 
+    func testImmediateRouterActiveMedicalHoldBlocksResetAndPrivateSession() {
+        for choice in [ImmediateActionChoice.reset, .privateSession, .guided] {
+            let result = ImmediateActionRouter().route(ImmediateActionRequest(
+                choice: choice,
+                intensity: 8,
+                hasActiveSafetyHold: true,
+                activeSafetyHoldSeverity: .medical,
+                activeSafetyHoldReason: "safety.urinary"
+            ))
+            XCTAssertEqual(result.destination, .healthCheck)
+        }
+    }
+
+    func testImmediateRouterActiveIrritationHoldUsesRecoveryBlockUntilRecheck() {
+        let recheck = Date.now.addingTimeInterval(3_600)
+        let result = ImmediateActionRouter().route(ImmediateActionRequest(
+            choice: .privateSession,
+            intensity: 6,
+            hasActiveSafetyHold: true,
+            activeSafetyHoldSeverity: .caution,
+            activeSafetyHoldReason: "safety.irritation",
+            activeSafetyHoldRecheckDate: recheck
+        ))
+        XCTAssertEqual(result.destination, .recoveryBlocked)
+        XCTAssertEqual(result.activeSafetyHoldRecheckDate, recheck)
+    }
+
+    func testPrivateSessionCycleQualifiesBeforeResumeAndNeverDoubleCounts() {
+        var tracker = PrivateSessionCycleTracker()
+        tracker.beginRecovery(reason: .manual, assistanceEnabled: true)
+        XCTAssertTrue(tracker.qualifyRecovery(elapsedSeconds: 30, intensity: 4, minimumRecoverySeconds: 30))
+        tracker.resumeActivePhase()
+        XCTAssertFalse(tracker.qualifyRecovery(elapsedSeconds: 60, intensity: 3, minimumRecoverySeconds: 30))
+        XCTAssertEqual(tracker.completedCycles, 1)
+    }
+
+    func testPrivateInterruptionNeverQualifiesAsTrainingCycle() {
+        var tracker = PrivateSessionCycleTracker()
+        tracker.beginRecovery(reason: .interruption, assistanceEnabled: true)
+        XCTAssertFalse(tracker.qualifyRecovery(elapsedSeconds: 60, intensity: 3, minimumRecoverySeconds: 30))
+        XCTAssertEqual(tracker.completedCycles, 0)
+    }
+
     func testSafetyAlwaysBlocksTraining() { var c = DecisionContext(); c.urgeIntensity = 9; c.intent = .training; c.urinaryBurning = true; let r = RuleEngine().evaluate(c); XCTAssertEqual(r.action, .healthCheck); XCTAssertTrue(r.blocksGuidedTraining) }
     func testRecentSessionRoutesToRecovery() { var c = DecisionContext(); c.programPhase = .awareness; c.hoursSinceLastSession = 6; c.intent = .training; XCTAssertEqual(RuleEngine().evaluate(c).action, .recovery) }
     func testGuidedSessionNeedsRecoveryBeforeResume() { var s = GuidedSessionMachine(); s.start(); s.beginActive(); XCTAssertTrue(s.rising(level: 7, threshold: 7)); XCTAssertEqual(s.state, .warning); XCTAssertTrue(s.advanceWarningToRecovery()); s.recovered(level: 5, elapsedSeconds: 30); XCTAssertEqual(s.state, .pausedRecovery); s.recovered(level: 4, elapsedSeconds: 30); XCTAssertEqual(s.state, .resumeReady) }
@@ -140,6 +183,55 @@ final class TempoDomainTests: XCTestCase {
         XCTAssertTrue(identifiers.contains("tempo.remind-later"))
         XCTAssertTrue(identifiers.contains("tempo.daily-plan"))
         XCTAssertEqual(identifiers.filter { $0.hasPrefix("tempo.daily-plan.") }.count, 7)
+    }
+
+    func testDailyReadinessUsesLatestCurrentDayThenRecentAndKeepsOneEntryPerDay() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        func date(_ day: Int, _ hour: Int) -> Date {
+            calendar.date(from: DateComponents(year: 2026, month: 7, day: day, hour: hour))!
+        }
+
+        let reference = date(20, 20)
+        let recent = DailyReadinessRecord(date: date(19, 9), sleepHoursLastNight: 6.5, anxietyToday: 7, energyToday: 4, irritationOrPain: false)
+        let earlierToday = DailyReadinessRecord(date: date(20, 8), sleepHoursLastNight: 7, anxietyToday: 3, energyToday: 7, irritationOrPain: false)
+        let latestToday = DailyReadinessRecord(date: date(20, 19), sleepHoursLastNight: 5, anxietyToday: 9, energyToday: 2, irritationOrPain: true)
+        let stale = DailyReadinessRecord(date: date(10, 9), sleepHoursLastNight: 8, anxietyToday: 2, energyToday: 8, irritationOrPain: false)
+
+        XCTAssertEqual(DailyReadinessSelection.today(from: [recent, earlierToday, latestToday], at: reference, calendar: calendar)?.id, latestToday.id)
+        XCTAssertEqual(DailyReadinessSelection.currentOrRecent(from: [recent, earlierToday, latestToday], at: reference, calendar: calendar)?.id, latestToday.id)
+        XCTAssertEqual(DailyReadinessSelection.currentOrRecent(from: [recent, stale], at: reference, calendar: calendar)?.id, recent.id)
+        XCTAssertNil(DailyReadinessSelection.currentOrRecent(from: [stale], at: reference, calendar: calendar))
+        XCTAssertEqual(recent.sleepHoursLastNight, 6.5)
+
+        let updated = DailyReadinessSelection.replacingToday(latestToday, in: [recent, earlierToday], calendar: calendar)
+        XCTAssertEqual(updated.filter { calendar.isDate($0.date, inSameDayAs: reference) }.count, 1)
+        XCTAssertEqual(updated.first?.id, latestToday.id)
+        XCTAssertEqual(updated.last?.id, recent.id)
+    }
+
+    func testLegacyPrivateSessionDecodesWithoutDetailedPauseCounts() throws {
+        struct LegacyPrivateSession: Encodable {
+            let id: UUID
+            let startedAt: Date
+            let completedAt: Date
+            let elapsedSeconds: Int
+            let pauseCount: Int
+            let outcome: String?
+            let note: String?
+            let detailWasSaved: Bool
+            let rulesetVersion: String
+        }
+
+        let legacy = LegacyPrivateSession(
+            id: UUID(), startedAt: .now.addingTimeInterval(-60), completedAt: .now,
+            elapsedSeconds: 60, pauseCount: 1, outcome: nil, note: nil,
+            detailWasSaved: false, rulesetVersion: "2.1.0"
+        )
+        let decoded = try JSONDecoder().decode(LocalPrivateSession.self, from: JSONEncoder().encode(legacy))
+
+        XCTAssertNil(decoded.thresholdPauseCount)
+        XCTAssertNil(decoded.interruptionPauseCount)
     }
 
     func testDailyRecommendationDoesNotLetCompletedItemMaskActionableReschedule() {

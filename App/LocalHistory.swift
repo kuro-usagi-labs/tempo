@@ -11,6 +11,69 @@ struct LocalCheckIn: Codable, Identifiable {
     let blocksTraining: Bool
 }
 
+/// A short, local-only snapshot of the user's condition for one day. It is
+/// intentionally separate from onboarding so today's state can safely outrank
+/// a stale baseline without rewriting the baseline itself.
+struct DailyReadinessRecord: Codable, Identifiable, Equatable {
+    let id: UUID
+    let date: Date
+    let sleepHoursLastNight: Double
+    let anxietyToday: Int
+    let energyToday: Int
+    let irritationOrPain: Bool
+
+    init(
+        id: UUID = UUID(),
+        date: Date = .now,
+        sleepHoursLastNight: Double,
+        anxietyToday: Int,
+        energyToday: Int,
+        irritationOrPain: Bool
+    ) {
+        self.id = id
+        self.date = date
+        self.sleepHoursLastNight = min(16, max(0, sleepHoursLastNight))
+        self.anxietyToday = min(10, max(1, anxietyToday))
+        self.energyToday = min(10, max(1, energyToday))
+        self.irritationOrPain = irritationOrPain
+    }
+}
+
+/// Selection is pure so the same current-day > recent > baseline precedence
+/// can be tested without relying on local storage.
+enum DailyReadinessSelection {
+    static func today(
+        from records: [DailyReadinessRecord],
+        at referenceDate: Date = .now,
+        calendar: Calendar = .current
+    ) -> DailyReadinessRecord? {
+        records
+            .filter { $0.date <= referenceDate && calendar.isDate($0.date, inSameDayAs: referenceDate) }
+            .max { $0.date < $1.date }
+    }
+
+    static func currentOrRecent(
+        from records: [DailyReadinessRecord],
+        at referenceDate: Date = .now,
+        calendar: Calendar = .current
+    ) -> DailyReadinessRecord? {
+        if let current = today(from: records, at: referenceDate, calendar: calendar) { return current }
+        let cutoff = calendar.date(byAdding: .day, value: -7, to: calendar.startOfDay(for: referenceDate)) ?? referenceDate.addingTimeInterval(-7 * 86_400)
+        return records
+            .filter { $0.date <= referenceDate && $0.date >= cutoff }
+            .max { $0.date < $1.date }
+    }
+
+    static func replacingToday(
+        _ record: DailyReadinessRecord,
+        in records: [DailyReadinessRecord],
+        calendar: Calendar = .current
+    ) -> [DailyReadinessRecord] {
+        (records.filter { !calendar.isDate($0.date, inSameDayAs: record.date) } + [record])
+            .sorted { $0.date > $1.date }
+    }
+}
+
 extension LocalPlanStatus {
     init(_ status: ProgramPlanStatus) {
         switch status {
@@ -194,6 +257,9 @@ struct LocalPrivateSession: Codable, Identifiable {
     let stoppedIntentionally: Bool?
     let painAfter: Bool?
     let irritationAfter: Bool?
+    /// Optional to preserve records produced before pause reasons were split.
+    let thresholdPauseCount: Int?
+    let interruptionPauseCount: Int?
 
     init(
         id: UUID,
@@ -215,7 +281,9 @@ struct LocalPrivateSession: Codable, Identifiable {
         tooFast: Bool? = nil,
         stoppedIntentionally: Bool? = nil,
         painAfter: Bool? = nil,
-        irritationAfter: Bool? = nil
+        irritationAfter: Bool? = nil,
+        thresholdPauseCount: Int? = nil,
+        interruptionPauseCount: Int? = nil
     ) {
         self.id = id
         self.startedAt = startedAt
@@ -237,6 +305,8 @@ struct LocalPrivateSession: Codable, Identifiable {
         self.stoppedIntentionally = stoppedIntentionally
         self.painAfter = painAfter
         self.irritationAfter = irritationAfter
+        self.thresholdPauseCount = thresholdPauseCount
+        self.interruptionPauseCount = interruptionPauseCount
     }
 }
 
@@ -402,7 +472,7 @@ struct LocalSafetyHold: Codable, Identifiable {
 }
 
 private struct LocalProfileState: Codable {
-    var schemaVersion = 2
+    var schemaVersion = 3
     var baseline: LocalBaseline?
     var safetyHolds: [LocalSafetyHold] = []
     var programPhase: ProgramPhase = .awareness
@@ -417,6 +487,7 @@ private struct LocalExportSnapshot: Codable {
     let sessions: [LocalSession]
     let privateSessions: [LocalPrivateSession]
     let exercises: [LocalExerciseLog]
+    let dailyReadiness: [DailyReadinessRecord]
     let plan: [LocalPlanDay]
 }
 
@@ -428,6 +499,7 @@ final class LocalHistory {
     private(set) var sessions: [LocalSession] = []
     private(set) var privateSessions: [LocalPrivateSession] = []
     private(set) var exercises: [LocalExerciseLog] = []
+    private(set) var dailyReadiness: [DailyReadinessRecord] = []
     private(set) var plannedDays: [LocalPlanDay] = []
     private var profile = LocalProfileState()
     private(set) var hasPendingSafetyWrite = false
@@ -436,6 +508,7 @@ final class LocalHistory {
     private let urgeOutcomeStorageKey = "tempo.local.urge-outcomes.v1"
     private let profileStorageKey = "tempo.local.profile.v1"
     private let exerciseStorageKey = "tempo.local.exercises.v1"
+    private let dailyReadinessStorageKey = "tempo.local.daily-readiness.v1"
     private let planStorageKey = "tempo.local.plan.v1"
     private let privateSessionStorageKey = "tempo.local.private-sessions.v2"
     private let pendingSafetyStorageKey = "tempo.pending-safety-lock.v1"
@@ -445,7 +518,14 @@ final class LocalHistory {
     var baseline: LocalBaseline? { profile.baseline }
     var safetyHoldCount: Int { profile.safetyHolds.count }
     var activeSafetyHold: LocalSafetyHold? { profile.safetyHolds.last { $0.resolvedAt == nil } }
-    var hasSafetyBlock: Bool { activeSafetyHold != nil || hasPendingSafetyWrite }
+    var todayReadiness: DailyReadinessRecord? {
+        DailyReadinessSelection.today(from: dailyReadiness)
+    }
+    var currentOrRecentReadiness: DailyReadinessRecord? {
+        DailyReadinessSelection.currentOrRecent(from: dailyReadiness)
+    }
+    var hasReadinessSafetyConcern: Bool { todayReadiness?.irritationOrPain == true }
+    var hasSafetyBlock: Bool { activeSafetyHold != nil || hasPendingSafetyWrite || hasReadinessSafetyConcern }
     var currentWeekPlan: [LocalPlanDay] {
         let start = weekStart(for: .now)
         let end = Calendar.current.date(byAdding: .day, value: 7, to: start) ?? start
@@ -482,11 +562,13 @@ final class LocalHistory {
         return upcomingPlan.first { Calendar.current.isDate($0.scheduleDate, inSameDayAs: tomorrow) }
     }
     var programContext: ProgramContext {
+        let readiness = currentOrRecentReadiness
         ProgramContext(
             phase: effectiveProgramPhase,
             baselineCompleted: baseline != nil,
             anxiety: Int((currentAnxiety ?? Double(baseline?.anxiety ?? 5)).rounded()),
-            sleepHours: baseline.map { Double($0.sleepHours) },
+            sleepHours: readiness.map(\.sleepHoursLastNight) ?? baseline.map { Double($0.sleepHours) },
+            energyToday: readiness?.energyToday,
             exerciseRestricted: baseline?.hasExerciseRestriction == true,
             canWalkTwentyMinutes: baseline?.canWalkTwentyMinutes ?? true,
             hasSafeActivitySpace: baseline?.hasSafeActivitySpace ?? true,
@@ -501,6 +583,7 @@ final class LocalHistory {
             weeklyMovementMinutes: baseline?.weeklyMovementMinutes,
             activityLevel: baseline?.activityLevel,
             preferredActivity: baseline?.preferredActivity,
+            readinessIsCurrent: todayReadiness != nil,
             programWeek: max(1, programWeek)
         )
     }
@@ -568,6 +651,7 @@ final class LocalHistory {
         }
     }
     var currentAnxiety: Double? {
+        if let readiness = currentOrRecentReadiness { return Double(readiness.anxietyToday) }
         let values = trainingSessions.prefix(5).compactMap(\.postAnxiety)
         guard !values.isEmpty else { return baseline.map { Double($0.anxiety) } }
         return Double(values.reduce(0, +)) / Double(values.count)
@@ -591,10 +675,20 @@ final class LocalHistory {
     var hoursSinceLastPrivateSession: Double? { privateSessions.first.map { Date.now.timeIntervalSince($0.completedAt) / 3_600 } }
     var guidedSessionsLast7Days: Int { trainingSessions.filter { $0.completedAt >= Date.now.addingTimeInterval(-7 * 86_400) }.count }
     var lateStopsLast3Sessions: Int { trainingSessions.prefix(3).filter { $0.lateStopOccurred == true }.count }
-    var sessionPrescription: SessionPrescription { SessionPrescriptionEngine().prescription(for: programContext) }
+    private var readinessAdaptiveContext: ProgramContext {
+        var context = programContext
+        guard !context.readinessIsCurrent else { return context }
+        // A past check-in can inform a soft estimate, but only a check-in from
+        // today may trigger the high-anxiety/low-sleep hard adaptation.
+        context.anxiety = min(7, context.anxiety)
+        context.sleepHours = nil
+        context.energyToday = nil
+        return context
+    }
+    var sessionPrescription: SessionPrescription { SessionPrescriptionEngine().prescription(for: readinessAdaptiveContext) }
     var todayPrescription: DailyPrescription {
         let items = upcomingPlan.map(ProgramPlanItem.init(localDay:))
-        return DailyRecommendationEngine().prescription(for: .now, items: items, context: programContext)
+        return DailyRecommendationEngine().prescription(for: .now, items: items, context: readinessAdaptiveContext)
     }
     var progressPresentation: ProgressPresentationState { ProgressEngine().presentation(sessionCount: trainingSessions.count, scores: scoreSnapshot) }
     private var trainingSessions: [LocalSession] {
@@ -628,7 +722,7 @@ final class LocalHistory {
     }
 
     func makeExportData() -> Data? {
-        try? JSONEncoder().encode(LocalExportSnapshot(exportedAt: .now, rulesetVersion: RuleEngine.rulesetVersion, profile: profile, checkIns: checkIns, urgeOutcomes: urgeOutcomes, sessions: sessions, privateSessions: privateSessions, exercises: exercises, plan: plannedDays))
+        try? JSONEncoder().encode(LocalExportSnapshot(exportedAt: .now, rulesetVersion: RuleEngine.rulesetVersion, profile: profile, checkIns: checkIns, urgeOutcomes: urgeOutcomes, sessions: sessions, privateSessions: privateSessions, exercises: exercises, dailyReadiness: dailyReadiness, plan: plannedDays))
     }
 
     init() {
@@ -659,6 +753,39 @@ final class LocalHistory {
         guard save(updated, for: urgeOutcomeStorageKey) else { return false }
         urgeOutcomes = updated
         return true
+    }
+
+    /// Saves a concise daily check-in. Today's entry takes precedence over a
+    /// recent entry and baseline values for today's deterministic plan.
+    @discardableResult
+    func saveDailyReadiness(
+        sleepHoursLastNight: Double,
+        anxietyToday: Int,
+        energyToday: Int,
+        irritationOrPain: Bool
+    ) -> Bool {
+        let record = DailyReadinessRecord(
+            date: .now,
+            sleepHoursLastNight: sleepHoursLastNight,
+            anxietyToday: anxietyToday,
+            energyToday: energyToday,
+            irritationOrPain: irritationOrPain
+        )
+        var updated = DailyReadinessSelection.replacingToday(record, in: dailyReadiness)
+        updated = Array(updated.prefix(180))
+        guard save(updated, for: dailyReadinessStorageKey) else { return false }
+        dailyReadiness = updated
+
+        if irritationOrPain {
+            guard recordSafetyHold(
+                reasonCode: "safety.daily-readiness-symptom",
+                severity: RecommendationSeverity.medical.rawValue,
+                source: "daily-readiness"
+            ) else { return false }
+        }
+        // This post-save refresh emits `tempoPlanDidChange`, allowing the app
+        // layer to remove stale reminders and schedule the updated plan.
+        return refreshPlan(force: true)
     }
 
     @discardableResult
@@ -699,7 +826,9 @@ final class LocalHistory {
         tooFast: Bool,
         stoppedIntentionally: Bool,
         painAfter: Bool,
-        irritationAfter: Bool
+        irritationAfter: Bool,
+        thresholdPauseCount: Int? = nil,
+        interruptionPauseCount: Int? = nil
     ) -> Bool {
         var updated = privateSessions
         updated.insert(
@@ -713,7 +842,9 @@ final class LocalHistory {
                 completedCycles: max(0, completedCycles), terminalState: terminalState,
                 assistanceEnabled: assistanceEnabled, tooFast: tooFast,
                 stoppedIntentionally: stoppedIntentionally, painAfter: painAfter,
-                irritationAfter: irritationAfter
+                irritationAfter: irritationAfter,
+                thresholdPauseCount: thresholdPauseCount.map { max(0, $0) },
+                interruptionPauseCount: interruptionPauseCount.map { max(0, $0) }
             ),
             at: 0
         )
@@ -807,7 +938,7 @@ final class LocalHistory {
     @discardableResult
     func deleteAll() -> Bool {
         guard ProtectedFileStore.removeAll(), SecureLocalStore.removeAll() else { return false }
-        [storageKey, sessionStorageKey, urgeOutcomeStorageKey, profileStorageKey, exerciseStorageKey, planStorageKey, privateSessionStorageKey].forEach {
+        [storageKey, sessionStorageKey, urgeOutcomeStorageKey, profileStorageKey, exerciseStorageKey, dailyReadinessStorageKey, planStorageKey, privateSessionStorageKey].forEach {
             UserDefaults.standard.removeObject(forKey: $0)
         }
         checkIns = []
@@ -816,6 +947,7 @@ final class LocalHistory {
         privateSessions = []
         profile = LocalProfileState()
         exercises = []
+        dailyReadiness = []
         plannedDays = []
         hasPendingSafetyWrite = false
         UserDefaults.standard.removeObject(forKey: pendingSafetyStorageKey)
@@ -837,7 +969,9 @@ final class LocalHistory {
                 emergencyPauseCount: value.emergencyPauseCount, completedCycles: value.completedCycles,
                 terminalState: value.terminalState, assistanceEnabled: value.assistanceEnabled,
                 tooFast: value.tooFast, stoppedIntentionally: value.stoppedIntentionally,
-                painAfter: value.painAfter, irritationAfter: value.irritationAfter
+                painAfter: value.painAfter, irritationAfter: value.irritationAfter,
+                thresholdPauseCount: value.thresholdPauseCount,
+                interruptionPauseCount: value.interruptionPauseCount
             )
         }
         guard privateSessionRepository.write(updatedPrivate) else { return false }
@@ -850,11 +984,24 @@ final class LocalHistory {
     @discardableResult
     func refreshPlan(force: Bool = false) -> Bool {
         let calendar = Calendar.current
+        let now = Date.now
         let start = weekStart(for: .now)
         let end = calendar.date(byAdding: .day, value: 14, to: start) ?? start
         let existing = plannedDays.filter { $0.scheduleDate >= start && $0.scheduleDate < end }
         let baseExisting = existing.filter { $0.rescheduledFromID == nil }
         let carriedReschedules = existing.filter { $0.rescheduledFromID != nil }
+        // The current planning window starts on Monday. Keep a recently
+        // missed guided item from the preceding week in the resolution pass
+        // too, otherwise a Sunday activity could lose its <48-hour recovery
+        // opportunity merely because the calendar rolled into Monday.
+        let recentlyMissedBeforeWindow = plannedDays.filter { row in
+            row.scheduleDate < start &&
+                row.scheduleDate < now &&
+                now.timeIntervalSince(row.scheduleDate) < AdaptationPolicy.maximumMissedGuidedAge &&
+                row.status == .planned &&
+                row.rescheduledFromID == nil &&
+                row.effectiveKind == .guided
+        }
         let scheduleHistory = ProgramScheduleHistory(
             guidedSessionDates: trainingSessions.map(\.completedAt),
             privateSessionDates: privateSessions.map(\.completedAt),
@@ -867,15 +1014,25 @@ final class LocalHistory {
             weeks: 2,
             context: programContext,
             scheduleHistory: scheduleHistory,
-            referenceDate: .now,
+            referenceDate: now,
             calendar: calendar
         )
         let refreshPolicy = PlanRefreshPolicy()
         var updatedWindow = generated.map { item -> LocalPlanDay in
             let day = calendar.startOfDay(for: item.scheduledAt)
             let retained = baseExisting.first { calendar.isDate($0.scheduleDate, inSameDayAs: day) }
+            let userControlledReasons: Set<PlanReason> = [.unavailable, .postponed, .safeReschedule]
+            let canReevaluateCurrentDay = retained.map { row in
+                let reasons = Set((row.adaptationReasonCodes ?? []).compactMap(PlanReason.init(rawValue:)))
+                return programContext.readinessIsCurrent
+                    && calendar.isDate(row.scheduleDate, inSameDayAs: now)
+                    && row.status.isActionable
+                    && row.rescheduledFromID == nil
+                    && reasons.isDisjoint(with: userControlledReasons)
+            } ?? false
             if let retained,
-               refreshPolicy.shouldRetainExisting(ProgramPlanItem(localDay: retained), now: .now, force: force) {
+               !canReevaluateCurrentDay,
+               refreshPolicy.shouldRetainExisting(ProgramPlanItem(localDay: retained), now: now, force: force) {
                 return retained
             }
             return LocalPlanDay(
@@ -899,7 +1056,44 @@ final class LocalHistory {
             )
         }
         updatedWindow.append(contentsOf: carriedReschedules)
-        let today = calendar.startOfDay(for: .now)
+        updatedWindow.append(contentsOf: recentlyMissedBeforeWindow)
+        // A recently missed, untouched guided activity gets one opportunity
+        // for a safe replacement. The policy always turns the source terminal
+        // first, so a later refresh cannot revive it or create duplicates.
+        let adaptationPolicy = AdaptationPolicy()
+        let rowsBeforeMissedResolution = updatedWindow
+        var domainWindow = updatedWindow.map(ProgramPlanItem.init(localDay:))
+        let originalWindowIDs = domainWindow.map(\.id)
+        for id in originalWindowIDs {
+            guard let index = domainWindow.firstIndex(where: { $0.id == id }),
+                  let persisted = rowsBeforeMissedResolution.first(where: { $0.id == id }),
+                  // A freshly created plan must not pretend an earlier slot
+                  // was missed before the user could ever see it.
+                  persisted.generatedAt <= persisted.scheduleDate,
+                  domainWindow[index].scheduledAt < now
+            else { continue }
+            switch adaptationPolicy.resolveMissedGuided(
+                domainWindow[index],
+                now: now,
+                items: domainWindow,
+                scheduleHistory: scheduleHistory,
+                context: programContext,
+                calendar: calendar
+            ) {
+            case let .skipped(source):
+                domainWindow[index] = source
+            case let .rescheduled(result):
+                domainWindow[index] = result.skippedSource
+                domainWindow.append(result.rescheduledItem)
+            case nil:
+                break
+            }
+        }
+        updatedWindow = domainWindow.map { item in
+            localPlanDay(from: item, preserving: rowsBeforeMissedResolution.first { $0.id == item.id }, calendar: calendar)
+        }
+
+        let today = calendar.startOfDay(for: now)
         for index in updatedWindow.indices where updatedWindow[index].scheduleDate < today && updatedWindow[index].status.isActionable {
             let current = updatedWindow[index]
             updatedWindow[index] = LocalPlanDay(
@@ -910,7 +1104,10 @@ final class LocalHistory {
                 rescheduledFromID: current.rescheduledFromID, revision: current.revision, completedAt: current.completedAt, performedKind: current.performedKind
             )
         }
-        let otherWeeks = plannedDays.filter { $0.scheduleDate < start || $0.scheduleDate >= end }
+        let updatedIDs = Set(updatedWindow.map(\.id))
+        let otherWeeks = plannedDays.filter {
+            ($0.scheduleDate < start || $0.scheduleDate >= end) && !updatedIDs.contains($0.id)
+        }
         let updated = (otherWeeks + updatedWindow).sorted { $0.scheduleDate < $1.scheduleDate }
         guard planRepository.write(updated) else { return false }
         plannedDays = updated
@@ -1067,6 +1264,35 @@ final class LocalHistory {
         return true
     }
 
+    /// Rehydrates a persisted plan row after a domain-only adaptation while
+    /// preserving immutable local history such as its original generation
+    /// time. New automatic replacements simply have no preserved source row.
+    private func localPlanDay(
+        from item: ProgramPlanItem,
+        preserving existing: LocalPlanDay?,
+        calendar: Calendar
+    ) -> LocalPlanDay {
+        LocalPlanDay(
+            id: item.id,
+            date: calendar.startOfDay(for: item.scheduledAt),
+            kind: item.effectiveKind,
+            status: LocalPlanStatus(item.status),
+            phase: item.phase,
+            generatedAt: existing?.generatedAt ?? .now,
+            rulesetVersion: item.rulesetVersion.rawValue,
+            originalKind: item.adaptation?.originalKind ?? existing?.originalKind,
+            scheduledAt: item.scheduledAt,
+            estimatedMinutes: item.estimatedMinutes,
+            reasonCodes: item.reasons.map(\.rawValue),
+            adaptationReasonCodes: item.adaptation?.reasons.map(\.rawValue),
+            adaptedAt: item.adaptation?.adaptedAt,
+            rescheduledFromID: item.adaptation?.rescheduledFromID,
+            revision: item.revision,
+            completedAt: item.execution?.completedAt ?? existing?.completedAt,
+            performedKind: item.execution?.performedKind ?? existing?.performedKind
+        )
+    }
+
     private func load() {
         checkIns = load([LocalCheckIn].self, for: storageKey, defaultValue: [])
         urgeOutcomes = load([LocalUrgeOutcome].self, for: urgeOutcomeStorageKey, defaultValue: [])
@@ -1074,6 +1300,8 @@ final class LocalHistory {
         privateSessions = privateSessionRepository.read() ?? load([LocalPrivateSession].self, for: privateSessionStorageKey, defaultValue: [])
         profile = load(LocalProfileState.self, for: profileStorageKey, defaultValue: LocalProfileState())
         exercises = load([LocalExerciseLog].self, for: exerciseStorageKey, defaultValue: [])
+        dailyReadiness = load([DailyReadinessRecord].self, for: dailyReadinessStorageKey, defaultValue: [])
+            .sorted { $0.date > $1.date }
         plannedDays = planRepository.read() ?? load([LocalPlanDay].self, for: planStorageKey, defaultValue: [])
         if profile.safetyHolds.isEmpty, let blocked = checkIns.first(where: \.blocksTraining) {
             _ = recordSafetyHold(reasonCode: "safety.migrated.\(blocked.action)", severity: RecommendationSeverity.medical.rawValue, source: "migration")
@@ -1102,9 +1330,9 @@ final class LocalHistory {
             }
             if planRepository.write(migrated) { plannedDays = migrated }
         }
-        if profile.schemaVersion < 2 {
+        if profile.schemaVersion < 3 {
             var upgraded = profile
-            upgraded.schemaVersion = 2
+            upgraded.schemaVersion = 3
             if persistProfile(upgraded) { profile = upgraded }
         }
     }

@@ -271,6 +271,17 @@ struct TempoHealthCheckScreen: View {
                 Text("Jawab semua bagian sebelum melanjutkan. Kondisi berat, memburuk, atau cedera akut memerlukan bantuan medis sesuai layanan setempat.")
                     .font(.subheadline).foregroundStyle(.secondary)
             }
+            if let activeHold = history.activeSafetyHold {
+                Section("Safety hold aktif") {
+                    Text(activeHoldReason(activeHold.reasonCode))
+                        .foregroundStyle(.secondary)
+                    if let recheck = activeHold.recheckNotBefore, recheck > .now {
+                        Text("Pemeriksaan ulang tersedia sekitar \(recheck.formatted(date: .abbreviated, time: .shortened)).")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
             Section("Tanda keselamatan") {
                 SafetyScreeningFields(answers: $answers)
                 Toggle("Saya sudah membaca dan menjawab semua bagian", isOn: $confirmedComplete)
@@ -294,6 +305,18 @@ struct TempoHealthCheckScreen: View {
         if hasSymptoms { return answers.severity == .urgent ? "Hentikan latihan dan cari bantuan medis segera sesuai layanan setempat." : "Hentikan latihan dan minta penilaian tenaga kesehatan sebelum melanjutkan." }
         if let hours = history.safetyHoldRemainingHours { return "Masa pemulihan iritasi belum selesai. Periksa ulang setelah sekitar \(hours) jam lagi." }
         return "Jika seluruh jawaban tidak, safety hold aktif dapat diakhiri melalui pemeriksaan ulang lengkap ini."
+    }
+
+    private func activeHoldReason(_ code: String) -> String {
+        let normalized = code.lowercased()
+        if normalized.contains("blood") { return "Darah pernah dilaporkan. Aktivitas tetap dijeda sampai pemeriksaan ulang aman." }
+        if normalized.contains("fever") { return "Demam pernah dilaporkan. Aktivitas tetap dijeda sampai pemeriksaan ulang aman." }
+        if normalized.contains("urinary") { return "Keluhan saluran kemih pernah dilaporkan. Aktivitas tetap dijeda sampai pemeriksaan ulang aman." }
+        if normalized.contains("discharge") { return "Cairan tidak biasa pernah dilaporkan. Aktivitas tetap dijeda sampai pemeriksaan ulang aman." }
+        if normalized.contains("injury") { return "Cedera pernah dilaporkan. Aktivitas tetap dijeda sampai pemeriksaan ulang aman." }
+        if normalized.contains("irritation") { return "Iritasi pernah dilaporkan. Beri tubuh waktu pulih dan lakukan pemeriksaan ulang." }
+        if normalized.contains("pain") || normalized.contains("symptom") { return "Nyeri atau gejala fisik baru pernah dilaporkan. Aktivitas tetap dijeda sampai pemeriksaan ulang aman." }
+        return "Safety hold aktif yang tersimpan masih memerlukan pemeriksaan ulang sebelum sesi dapat dimulai."
     }
 
     private func save() {

@@ -20,6 +20,7 @@ struct TempoV2Onboarding: View {
     @State private var weeklyMovement = 60
     @State private var canWalk = true
     @State private var exerciseRestricted = false
+    @State private var activityPreference: ActivityPreference = .noPreference
     @State private var safeSpace = true
     @State private var rushedHabit = false
     @State private var highStimulus = false
@@ -121,6 +122,27 @@ struct TempoV2Onboarding: View {
                     Stepper("Gerak mingguan: \(weeklyMovement) menit", value: $weeklyMovement, in: 0...420, step: 15)
                     Toggle("Saya bisa jalan santai sekitar 20 menit", isOn: $canWalk).tint(TempoDesign.Palette.accent)
                     Toggle("Ada pembatasan aktivitas dari tenaga kesehatan", isOn: $exerciseRestricted).tint(TempoDesign.Palette.caution)
+                    Divider().overlay(TempoDesign.Palette.border)
+                    Text("Aktivitas yang paling realistis untukmu").font(TempoDesign.Typography.cardTitle)
+                    Text("Ini adalah preferensi, bukan target. TEMPO tetap memilih pemulihan bila kondisi, jarak sesi, atau batasan aktivitas belum aman.")
+                        .font(TempoDesign.Typography.supporting)
+                        .foregroundStyle(TempoDesign.Palette.textSecondary)
+                    ForEach(ActivityPreference.allCases, id: \.self) { preference in
+                        Button { activityPreference = preference } label: {
+                            HStack(spacing: TempoDesign.Spacing.sm) {
+                                Image(systemName: activityPreference == preference ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(activityPreference == preference ? TempoDesign.Palette.accentSoft : TempoDesign.Palette.textSecondary)
+                                Text(preference.legacyDisplayValue)
+                                    .font(TempoDesign.Typography.supporting)
+                                    .foregroundStyle(TempoDesign.Palette.textPrimary)
+                                Spacer()
+                            }
+                            .padding(.vertical, TempoDesign.Spacing.xs)
+                        }
+                        .buttonStyle(TempoTactileButtonStyle())
+                        .accessibilityIdentifier("onboarding.activityPreference.\(preference.rawValue)")
+                        .accessibilityAddTraits(activityPreference == preference ? .isSelected : [])
+                    }
                 }
             }
         case 8:
@@ -242,7 +264,20 @@ struct TempoV2Onboarding: View {
     }
 
     private var previewContext: ProgramContext {
-        ProgramContext(phase: .awareness, baselineCompleted: true, anxiety: anxiety, sleepHours: Double(sleepHours), exerciseRestricted: exerciseRestricted, canWalkTwentyMinutes: canWalk, hasSafeActivitySpace: safeSpace, rushedHabit: rushedHabit, highStimulusPattern: highStimulus, hasSafetyHold: safety.hasAny)
+        ProgramContext(
+            phase: .awareness,
+            baselineCompleted: true,
+            anxiety: anxiety,
+            sleepHours: Double(sleepHours),
+            exerciseRestricted: exerciseRestricted,
+            canWalkTwentyMinutes: canWalk,
+            hasSafeActivitySpace: safeSpace,
+            rushedHabit: rushedHabit,
+            highStimulusPattern: highStimulus,
+            hasSafetyHold: safety.hasAny,
+            preferredActivity: activityPreference.legacyDisplayValue,
+            activityPreference: activityPreference
+        )
     }
 
     private func finish() {
@@ -252,7 +287,7 @@ struct TempoV2Onboarding: View {
             completedAt: .now, onset: onset, difficultyContext: context, perceivedControl: control, anxiety: anxiety,
             sleepHours: sleepHours, activityLevel: weeklyMovement == 0 ? "Jarang" : "Aktif", weeklyMovementMinutes: weeklyMovement,
             canWalkTwentyMinutes: canWalk, hasExerciseRestriction: exerciseRestricted, hasSafeActivitySpace: safeSpace,
-            preferredActivity: canWalk ? "Jalan santai" : "Napas singkat", rushedHabit: rushedHabit,
+            preferredActivity: activityPreference.legacyDisplayValue, rushedHabit: rushedHabit,
             highStimulusPattern: highStimulus, hasSafetySymptoms: safety.hasAny, rulesetVersion: RulesetVersion.current.rawValue,
             reminderStartHour: remindersEnabled ? reminderHour : nil, reminderEndHour: remindersEnabled ? reminderEndHour : nil, adultConfirmed: adultConfirmed
         )

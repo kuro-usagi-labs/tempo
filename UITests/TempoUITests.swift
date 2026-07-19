@@ -29,6 +29,32 @@ final class TempoUITests: XCTestCase {
         XCTAssertTrue(identifiedElement("tab.program").waitForExistence(timeout: 5))
     }
 
+    func testProgramWeekNavigationAndTodayResetAreReachable() {
+        completeOnboarding()
+        app.tabBars.buttons["Program"].tap()
+
+        let range = identifiedElement("program.week.range")
+        XCTAssertTrue(range.waitForExistence(timeout: 5))
+        let next = identifiedElement("program.week.next")
+        XCTAssertTrue(next.exists)
+        XCTAssertTrue(next.isEnabled)
+        next.tap()
+        XCTAssertTrue(identifiedElement("program.week.previous").isEnabled)
+
+        let today = identifiedElement("program.week.today")
+        XCTAssertTrue(today.waitForExistence(timeout: 5))
+        today.tap()
+        XCTAssertTrue(range.exists)
+    }
+
+    func testPrimaryActivityPromptsForDailyReadinessBeforeOpening() {
+        completeOnboarding()
+        let start = identifiedElement("today.primary.start")
+        XCTAssertTrue(start.waitForExistence(timeout: 5))
+        start.tap()
+        XCTAssertTrue(identifiedElement("today.readiness.save").waitForExistence(timeout: 5))
+    }
+
     func testImmediatePrivateRouteUsesThreeDecisionFlow() {
         completeOnboarding()
         completeImmediateFlow(choice: "Sesi privat")
@@ -48,18 +74,36 @@ final class TempoUITests: XCTestCase {
         XCTAssertTrue(identifiedElement("guided.session").waitForExistence(timeout: 5))
     }
 
-    func testPrivateSessionWithoutAssistanceKeepsEmergencyPauseUserControlled() {
+    func testPrivateManualPauseEntersRecoveryWithoutRedWarning() {
         completeOnboarding()
         completeImmediateFlow(choice: "Sesi privat")
         XCTAssertTrue(identifiedElement("private.session.timer").waitForExistence(timeout: 5))
 
-        let assistance = identifiedElement("private.assistance.toggle")
-        XCTAssertTrue(assistance.waitForExistence(timeout: 5))
-        assistance.tap()
+        tapButton("Mulai dengan pelan")
+        tapButton("Jeda sekarang")
+
+        XCTAssertTrue(identifiedElement("private.recovery").waitForExistence(timeout: 5))
+        XCTAssertFalse(identifiedElement("private.pause.warning").exists)
+    }
+
+    func testPrivateThresholdUsesVisibleWarning() {
+        completeOnboarding()
+        completeImmediateFlow(choice: "Sesi privat")
+        XCTAssertTrue(identifiedElement("private.session.timer").waitForExistence(timeout: 5))
+
+        tapButton("Mulai dengan pelan")
+        let threshold = identifiedElement("intensity.level.7")
+        XCTAssertTrue(threshold.waitForExistence(timeout: 5))
+        threshold.tap()
+        XCTAssertTrue(identifiedElement("private.pause.warning").waitForExistence(timeout: 5))
+    }
+
+    func testPrivateEmergencyUsesVisibleWarning() {
+        completeOnboarding()
+        completeImmediateFlow(choice: "Sesi privat")
         tapButton("Mulai dengan pelan")
         tapButton("Hampir keluar")
-
-        XCTAssertTrue(app.buttons["Lanjut bila siap"].waitForExistence(timeout: 5))
+        XCTAssertTrue(identifiedElement("private.pause.warning").waitForExistence(timeout: 5))
     }
 
     private func completeOnboarding() {

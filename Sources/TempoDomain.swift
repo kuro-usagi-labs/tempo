@@ -47,6 +47,10 @@ public enum ImmediateActionDestination: String, Codable, Sendable, Hashable {
     case guided
     case guidedUnavailable
     case healthCheck
+    /// An active, mild-irritation hold needs recovery and a recheck. It is
+    /// deliberately distinct from both reset and the general health route so
+    /// the UI cannot offer a training shortcut while the hold is active.
+    case recoveryBlocked
 }
 
 public enum ImmediateActionAdvisory: String, Codable, Sendable, Hashable {
@@ -76,7 +80,21 @@ public struct ImmediateActionRequest: Equatable, Sendable {
     public var hoursSinceLastPrivateSession: Double?
     public var guidedSessionsLast7Days: Int
     public var guidedEligibility: GuidedEligibility
-    public var hasPhysicalSymptoms: Bool
+    /// The answer given in the current quick-action flow. This must take
+    /// precedence over every action choice.
+    public var hasCurrentPhysicalSymptoms: Bool
+    /// An unresolved hold stored from a previous check-in or session.
+    public var hasActiveSafetyHold: Bool
+    public var activeSafetyHoldSeverity: RecommendationSeverity?
+    public var activeSafetyHoldReason: String?
+    public var activeSafetyHoldRecheckDate: Date?
+
+    /// Source-compatible spelling retained for callers built before the
+    /// safety-hold fields were introduced.
+    public var hasPhysicalSymptoms: Bool {
+        get { hasCurrentPhysicalSymptoms }
+        set { hasCurrentPhysicalSymptoms = newValue }
+    }
 
     public init(
         choice: ImmediateActionChoice,
@@ -87,7 +105,12 @@ public struct ImmediateActionRequest: Equatable, Sendable {
         hoursSinceLastPrivateSession: Double? = nil,
         guidedSessionsLast7Days: Int = 0,
         guidedEligibility: GuidedEligibility = GuidedEligibility(isAllowed: true, reason: .ready, message: "Guided session tersedia."),
-        hasPhysicalSymptoms: Bool = false
+        hasPhysicalSymptoms: Bool? = nil,
+        hasCurrentPhysicalSymptoms: Bool = false,
+        hasActiveSafetyHold: Bool = false,
+        activeSafetyHoldSeverity: RecommendationSeverity? = nil,
+        activeSafetyHoldReason: String? = nil,
+        activeSafetyHoldRecheckDate: Date? = nil
     ) {
         self.choice = choice
         self.intensity = min(10, max(1, intensity))
@@ -97,7 +120,11 @@ public struct ImmediateActionRequest: Equatable, Sendable {
         self.hoursSinceLastPrivateSession = hoursSinceLastPrivateSession
         self.guidedSessionsLast7Days = max(0, guidedSessionsLast7Days)
         self.guidedEligibility = guidedEligibility
-        self.hasPhysicalSymptoms = hasPhysicalSymptoms
+        self.hasCurrentPhysicalSymptoms = hasCurrentPhysicalSymptoms || (hasPhysicalSymptoms ?? false)
+        self.hasActiveSafetyHold = hasActiveSafetyHold
+        self.activeSafetyHoldSeverity = activeSafetyHoldSeverity
+        self.activeSafetyHoldReason = activeSafetyHoldReason
+        self.activeSafetyHoldRecheckDate = activeSafetyHoldRecheckDate
     }
 }
 
@@ -105,11 +132,24 @@ public struct ImmediateActionRoute: Equatable, Sendable {
     public let destination: ImmediateActionDestination
     public let advisories: [ImmediateActionAdvisory]
     public let guidedEligibility: GuidedEligibility?
+    public let activeSafetyHoldSeverity: RecommendationSeverity?
+    public let activeSafetyHoldReason: String?
+    public let activeSafetyHoldRecheckDate: Date?
 
-    public init(destination: ImmediateActionDestination, advisories: [ImmediateActionAdvisory] = [], guidedEligibility: GuidedEligibility? = nil) {
+    public init(
+        destination: ImmediateActionDestination,
+        advisories: [ImmediateActionAdvisory] = [],
+        guidedEligibility: GuidedEligibility? = nil,
+        activeSafetyHoldSeverity: RecommendationSeverity? = nil,
+        activeSafetyHoldReason: String? = nil,
+        activeSafetyHoldRecheckDate: Date? = nil
+    ) {
         self.destination = destination
         self.advisories = advisories
         self.guidedEligibility = guidedEligibility
+        self.activeSafetyHoldSeverity = activeSafetyHoldSeverity
+        self.activeSafetyHoldReason = activeSafetyHoldReason
+        self.activeSafetyHoldRecheckDate = activeSafetyHoldRecheckDate
     }
 }
 
@@ -117,8 +157,11 @@ public struct ImmediateActionRouter: Sendable {
     public init() {}
 
     public func route(_ request: ImmediateActionRequest) -> ImmediateActionRoute {
-        if request.hasPhysicalSymptoms {
+        if request.hasCurrentPhysicalSymptoms {
             return ImmediateActionRoute(destination: .healthCheck)
+        }
+        if request.hasActiveSafetyHold {
+            return safetyHoldRoute(for: request)
         }
         switch request.choice {
         case .reset:
@@ -140,6 +183,21 @@ public struct ImmediateActionRouter: Sendable {
             if request.guidedSessionsLast7Days >= 3 { advisories.append(.frequentGuidedSessions) }
             return ImmediateActionRoute(destination: .privateSession, advisories: advisories)
         }
+    }
+
+    private func safetyHoldRoute(for request: ImmediateActionRequest) -> ImmediateActionRoute {
+        let severity = request.activeSafetyHoldSeverity
+        let reason = request.activeSafetyHoldReason
+        let recheckDate = request.activeSafetyHoldRecheckDate
+        let isIrritationOnly = severity == .caution &&
+            reason?.localizedCaseInsensitiveContains("irritation") == true &&
+            (recheckDate?.timeIntervalSinceNow ?? 0) > 0
+        return ImmediateActionRoute(
+            destination: isIrritationOnly ? .recoveryBlocked : .healthCheck,
+            activeSafetyHoldSeverity: severity,
+            activeSafetyHoldReason: reason,
+            activeSafetyHoldRecheckDate: recheckDate
+        )
     }
 }
 
@@ -208,6 +266,53 @@ public struct RuleEngine: Sendable {
         }
         if c.urgeIntensity >= 5 && c.intent == .training { return Recommendation(.guidedSession, .normal, "urge.training_ready", "Waktu pemulihanmu cukup untuk guided control session.") }
         return Recommendation(.education, .normal, "plan.review", "Materi singkat atau aktivitas pemulihan adalah langkah aman berikutnya.")
+    }
+}
+
+/// The reason a private session left its active phase. It is intentionally
+/// separate from guided-session reasons because private sessions are not
+/// scored as guided training.
+public enum PrivatePauseReason: String, Codable, Sendable, Hashable {
+    case manual
+    case threshold
+    case emergency
+    case interruption
+}
+
+/// Counts a private-session cycle at the moment recovery is genuinely safe.
+/// Resuming starts a new active phase only; it can never increment a cycle a
+/// second time. Interruption and non-assisted manual pauses are retained as
+/// events but do not qualify as training cycles.
+public struct PrivateSessionCycleTracker: Equatable, Sendable {
+    public private(set) var completedCycles = 0
+    public private(set) var currentCycleEligible = false
+    public private(set) var recoveryQualified = false
+
+    public init() {}
+
+    public mutating func beginRecovery(reason: PrivatePauseReason, assistanceEnabled: Bool) {
+        currentCycleEligible = reason != .interruption && (assistanceEnabled || reason == .emergency)
+        recoveryQualified = false
+    }
+
+    @discardableResult
+    public mutating func qualifyRecovery(
+        elapsedSeconds: Int,
+        intensity: Int,
+        minimumRecoverySeconds: Int
+    ) -> Bool {
+        guard currentCycleEligible,
+              !recoveryQualified,
+              elapsedSeconds >= max(0, minimumRecoverySeconds),
+              intensity <= 4 else { return false }
+        recoveryQualified = true
+        completedCycles += 1
+        return true
+    }
+
+    public mutating func resumeActivePhase() {
+        currentCycleEligible = false
+        recoveryQualified = false
     }
 }
 
@@ -306,6 +411,10 @@ public struct PlanActivityResolver: Sendable {
             }
             if context.anxiety >= 8 { return (.breathing, [.highAnxiety]) }
             if (context.sleepHours ?? 8) < 5.5 { return (.recovery, [.lowSleep]) }
+            if (context.energyToday ?? 10) <= 3 { return (.recovery, [.lowEnergy]) }
+        }
+        if (context.energyToday ?? 10) <= 3 && (kind == .cardio || kind == .strength) {
+            return (.recovery, [.lowEnergy])
         }
         return (kind, [])
     }

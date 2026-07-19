@@ -14,6 +14,7 @@ enum TempoRoute: Hashable {
     case guided(UUID?)
     case privateSession([ImmediateActionAdvisory])
     case guidedUnavailable(GuidedEligibilityReason, String, Date?)
+    case safetyRecoveryBlock(String?, Date?)
     case cardio(UUID?)
     case strength(UUID?)
     case breathing(UUID?, String, Int)
@@ -169,6 +170,8 @@ struct TempoRouteDestination: View {
         case let .privateSession(advisories): TempoPrivateSessionTimerScreen(advisories: advisories)
         case let .guidedUnavailable(reason, message, nextAvailableAt):
             TempoGuidedUnavailableScreen(reason: reason, message: message, nextAvailableAt: nextAvailableAt)
+        case let .safetyRecoveryBlock(reason, recheckDate):
+            TempoSafetyRecoveryBlockScreen(reason: reason, recheckDate: recheckDate)
         case let .cardio(id): TempoCardioSessionScreen(plannedDayID: id)
         case let .strength(id): TempoStrengthCircuitScreen(plannedDayID: id)
         case let .breathing(id, title, seconds): TempoBreathingSessionScreen(plannedDayID: id, title: title, duration: seconds)
