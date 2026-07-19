@@ -564,7 +564,9 @@ struct TempoPrivateSessionTimerScreen: View {
         speak("Stop. Lepas tangan.")
         warningTask?.cancel()
         warningTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(1))
+            // Keep this red warning brief, but give VoiceOver and UI automation
+            // enough time to perceive it before the recovery screen replaces it.
+            try? await Task.sleep(for: .milliseconds(1_500))
             guard !Task.isCancelled, phase == .warning else { return }
             beginRecovery(for: reason)
         }
