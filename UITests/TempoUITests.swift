@@ -33,7 +33,7 @@ final class TempoUITests: XCTestCase {
         completeOnboarding()
         tapButton("Aku mau onani sekarang")
         XCTAssertTrue(identifiedElement("immediate.action").waitForExistence(timeout: 5))
-        tapIdentifiedElement("immediate.choice.privateSession")
+        tapButton("Sesi privat")
         tapButton("Berikutnya")
         tapButton("Berikutnya")
         tapButton("Lanjutkan")
@@ -78,10 +78,4 @@ final class TempoUITests: XCTestCase {
         app.descendants(matching: .any)[identifier]
     }
 
-    private func tapIdentifiedElement(_ identifier: String) {
-        let element = identifiedElement(identifier)
-        XCTAssertTrue(element.waitForExistence(timeout: 5))
-        XCTAssertTrue(element.isEnabled)
-        element.tap()
-    }
 }
