@@ -30,6 +30,18 @@ enum ProtectedFileStore {
         }
     }
 
+    @discardableResult
+    static func remove(_ key: String) -> Bool {
+        do {
+            let url = try fileURL(for: key)
+            guard FileManager.default.fileExists(atPath: url.path) else { return true }
+            try FileManager.default.removeItem(at: url)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     private static func fileURL(for key: String) throws -> URL {
         let safeName = key.replacingOccurrences(of: ".", with: "-") + ".json"
         return try directoryURL(create: true).appendingPathComponent(safeName, isDirectory: false)
