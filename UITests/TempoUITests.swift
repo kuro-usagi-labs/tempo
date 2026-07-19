@@ -66,6 +66,9 @@ final class TempoUITests: XCTestCase {
 
     private func tapButton(_ label: String) {
         let button = app.buttons[label]
+        if !button.waitForExistence(timeout: 1) {
+            app.swipeUp()
+        }
         XCTAssertTrue(button.waitForExistence(timeout: 5))
         XCTAssertTrue(button.isEnabled)
         button.tap()
