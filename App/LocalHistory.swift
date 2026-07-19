@@ -706,7 +706,7 @@ final class LocalHistory {
             LocalPrivateSession(
                 id: UUID(), startedAt: startedAt, completedAt: .now,
                 elapsedSeconds: max(0, elapsedSeconds), pauseCount: max(0, pauseCount),
-                outcome: saveDetails ? outcome : nil, note: saveDetails ? note : nil,
+                outcome: outcome, note: saveDetails ? note : nil,
                 detailWasSaved: saveDetails, rulesetVersion: RulesetVersion.current.rawValue,
                 activeSeconds: max(0, activeSeconds), totalRecoverySeconds: max(0, totalRecoverySeconds),
                 manualPauseCount: max(0, manualPauseCount), emergencyPauseCount: max(0, emergencyPauseCount),

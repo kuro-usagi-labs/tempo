@@ -621,13 +621,14 @@ struct TempoGuidedSessionScreen: View {
     private var active: some View {
         VStack(spacing: TempoDesign.Spacing.lg) {
             ZStack {
-                Circle().stroke(TempoDesign.Palette.surfaceRaised, lineWidth: 14)
+                Circle().stroke(TempoDesign.Palette.surfaceElevated, lineWidth: 14)
                 Circle().trim(from: 0, to: min(1, Double(activeElapsed) / Double(prescription.activeTargetSeconds)))
                     .stroke(TempoDesign.Palette.accentSoft, style: StrokeStyle(lineWidth: 14, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                 VStack { Text("Aktif").font(TempoDesign.Typography.caption); Text(tempoDuration(activeElapsed)).font(.title2.bold().monospacedDigit()) }
             }
             .frame(width: 150, height: 150)
+            TempoStatusBadge("Siklus \(machine.cycles + 1) dari \(machine.maximumCycles)", tone: .accent)
             Text("Ikuti ritme yang ringan.").font(TempoDesign.Typography.pageTitle).multilineTextAlignment(.center)
             Text("Check-in angka ini kapan pun berubah. Ambang otomatis akan mengaktifkan peringatan dan jeda.")
                 .foregroundStyle(TempoDesign.Palette.textSecondary).multilineTextAlignment(.center)
