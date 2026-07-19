@@ -37,36 +37,53 @@ final class TempoUITests: XCTestCase {
         XCTAssertTrue(range.waitForExistence(timeout: 5))
         let badge = identifiedElement("program.week.badge")
         XCTAssertTrue(badge.waitForExistence(timeout: 5))
-        let currentWeek = badge.value as? String
-        XCTAssertNotNil(currentWeek)
-        let next = identifiedElement("program.week.next")
-        XCTAssertTrue(next.exists)
+        guard let currentWeek = badge.value as? String,
+              let currentWeekNumber = Int(currentWeek.filter(\.isNumber)) else {
+            return XCTFail("Calendar week badge should expose its displayed week number")
+        }
+        let next = app.buttons["program.week.next"]
+        XCTAssertTrue(next.waitForExistence(timeout: 5))
         XCTAssertTrue(next.isEnabled)
         next.tap()
-        XCTAssertTrue(identifiedElement("program.week.previous").isEnabled)
         let changedWeek = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value != %@", currentWeek ?? ""),
+            predicate: NSPredicate(format: "value != %@", currentWeek),
             object: badge
         )
         wait(for: [changedWeek], timeout: 5)
         let nextWeek = badge.value as? String
-        XCTAssertNotEqual(nextWeek, currentWeek)
-
-        let previous = identifiedElement("program.week.previous")
-        XCTAssertTrue(previous.exists)
-        XCTAssertTrue(previous.isEnabled)
-        previous.tap()
-        let restoredWeek = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value == %@", currentWeek ?? ""),
-            object: badge
-        )
-        wait(for: [restoredWeek], timeout: 5)
-        XCTAssertEqual(badge.value as? String, currentWeek)
+        XCTAssertEqual(nextWeek, "Minggu \(currentWeekNumber + 1)")
 
         let today = identifiedElement("program.week.today")
         XCTAssertTrue(today.waitForExistence(timeout: 5))
         today.tap()
+        let todayResetWeek = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", currentWeek),
+            object: badge
+        )
+        wait(for: [todayResetWeek], timeout: 5)
         XCTAssertTrue(range.exists)
+        XCTAssertEqual(badge.value as? String, currentWeek)
+
+        next.tap()
+        let nextWeekAgain = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "Minggu \(currentWeekNumber + 1)"),
+            object: badge
+        )
+        wait(for: [nextWeekAgain], timeout: 5)
+
+        let previous = app.buttons["program.week.previous"]
+        XCTAssertTrue(previous.waitForExistence(timeout: 5))
+        let previousEnabled = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isEnabled == true"),
+            object: previous
+        )
+        wait(for: [previousEnabled], timeout: 5)
+        previous.tap()
+        let restoredWeek = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", currentWeek),
+            object: badge
+        )
+        wait(for: [restoredWeek], timeout: 5)
         XCTAssertEqual(badge.value as? String, currentWeek)
     }
 
