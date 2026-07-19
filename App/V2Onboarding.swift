@@ -122,7 +122,7 @@ struct TempoV2Onboarding: View {
                     Stepper("Gerak mingguan: \(weeklyMovement) menit", value: $weeklyMovement, in: 0...420, step: 15)
                     Toggle("Saya bisa jalan santai sekitar 20 menit", isOn: $canWalk).tint(TempoDesign.Palette.accent)
                     Toggle("Ada pembatasan aktivitas dari tenaga kesehatan", isOn: $exerciseRestricted).tint(TempoDesign.Palette.caution)
-                    Divider().overlay(TempoDesign.Palette.border)
+                    Divider().overlay(TempoDesign.Palette.hairline)
                     Text("Aktivitas yang paling realistis untukmu").font(TempoDesign.Typography.cardTitle)
                     Text("Ini adalah preferensi, bukan target. TEMPO tetap memilih pemulihan bila kondisi, jarak sesi, atau batasan aktivitas belum aman.")
                         .font(TempoDesign.Typography.supporting)
