@@ -33,6 +33,9 @@ jobs:
       - name: Run iOS unit tests
         run: |
           xcodebuild test -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath "$PWD/build/DerivedData" CODE_SIGNING_ALLOWED=NO
+      - name: Build iOS application
+        run: |
+          xcodebuild build -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath "$PWD/build/DerivedData" CODE_SIGNING_ALLOWED=NO
       - name: Install and launch simulator smoke test
         run: |
           app_path="build/DerivedData/Build/Products/Debug-iphonesimulator/Tempo.app"

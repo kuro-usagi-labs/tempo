@@ -679,8 +679,8 @@ final class LocalHistory {
         return true
     }
 
-    /// Records a private session as a minimal recovery marker. Turning off
-    /// details removes outcome and note but still lets the schedule protect recovery.
+    /// Records the recovery marker and core outcome. Optional free-text stays
+    /// omitted unless the user explicitly enables private-session details.
     @discardableResult
     func addPrivateSession(
         startedAt: Date,

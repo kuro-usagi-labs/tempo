@@ -22,10 +22,13 @@ The product feels “smart” through a deterministic expert system:
 
 ## Main user actions
 
-- **I’m aroused now** — immediate urge check-in and routing.
-- **Start guided training** — start–stop session with haptics, timers, breathing, and recovery pauses.
+- **I’m aroused now** — explicit routing to a private session, a guided session, or a five-minute reset. High sexual intensity is never treated as stress by itself.
+- **Private session** — an optional start–stop assistant with an adaptive threshold, visible stop warning, recovery gate, haptics, and local reflection.
+- **Start guided training** — a state-driven coach with preparation, active check-ins, visible warning, recovery cycles, reflection, and complete local event history.
 - **Today’s plan** — automatically selected exercise, recovery, education, or training.
 - **Health check** — symptom screening and referral guidance.
+
+The two-week plan evaluates recovery at each activity's scheduled date. Completed, skipped, unavailable, postponed, and rescheduled decisions remain intact when the plan refreshes. Every successful plan change resynchronizes neutral local notifications.
 
 ## Recommended implementation
 
@@ -64,6 +67,6 @@ Start with:
 
 ## Build artifact
 
-Every push runs deterministic domain tests, iOS simulator tests, a simulator launch smoke test, and a device archive build. GitHub Actions publishes `Tempo-resign-ready.ipa` inside the `Tempo-resign-ready-ipa` artifact.
+Every push to `main` runs deterministic domain tests, iOS unit and UI tests, an explicit simulator build, a launch smoke test, and a device archive build. GitHub Actions publishes `Tempo-resign-ready.ipa` inside the `Tempo-resign-ready-ipa` artifact.
 
 The IPA is intentionally ad-hoc signed only so a sideload tool can replace its signature. It is not directly installable until it is re-signed for the target device. The app requires iOS 17 or later.
