@@ -183,6 +183,61 @@ struct LocalPrivateSession: Codable, Identifiable {
     let note: String?
     let detailWasSaved: Bool
     let rulesetVersion: String
+    let activeSeconds: Int?
+    let totalRecoverySeconds: Int?
+    let manualPauseCount: Int?
+    let emergencyPauseCount: Int?
+    let completedCycles: Int?
+    let terminalState: String?
+    let assistanceEnabled: Bool?
+    let tooFast: Bool?
+    let stoppedIntentionally: Bool?
+    let painAfter: Bool?
+    let irritationAfter: Bool?
+
+    init(
+        id: UUID,
+        startedAt: Date,
+        completedAt: Date,
+        elapsedSeconds: Int,
+        pauseCount: Int,
+        outcome: String?,
+        note: String?,
+        detailWasSaved: Bool,
+        rulesetVersion: String,
+        activeSeconds: Int? = nil,
+        totalRecoverySeconds: Int? = nil,
+        manualPauseCount: Int? = nil,
+        emergencyPauseCount: Int? = nil,
+        completedCycles: Int? = nil,
+        terminalState: String? = nil,
+        assistanceEnabled: Bool? = nil,
+        tooFast: Bool? = nil,
+        stoppedIntentionally: Bool? = nil,
+        painAfter: Bool? = nil,
+        irritationAfter: Bool? = nil
+    ) {
+        self.id = id
+        self.startedAt = startedAt
+        self.completedAt = completedAt
+        self.elapsedSeconds = elapsedSeconds
+        self.pauseCount = pauseCount
+        self.outcome = outcome
+        self.note = note
+        self.detailWasSaved = detailWasSaved
+        self.rulesetVersion = rulesetVersion
+        self.activeSeconds = activeSeconds
+        self.totalRecoverySeconds = totalRecoverySeconds
+        self.manualPauseCount = manualPauseCount
+        self.emergencyPauseCount = emergencyPauseCount
+        self.completedCycles = completedCycles
+        self.terminalState = terminalState
+        self.assistanceEnabled = assistanceEnabled
+        self.tooFast = tooFast
+        self.stoppedIntentionally = stoppedIntentionally
+        self.painAfter = painAfter
+        self.irritationAfter = irritationAfter
+    }
 }
 
 struct LocalExerciseLog: Codable, Identifiable {
@@ -192,6 +247,17 @@ struct LocalExerciseLog: Codable, Identifiable {
     let durationMinutes: Int
     let perceivedDifficulty: Int?
     let painReported: Bool?
+    let activityKind: ActivityKind?
+
+    init(id: UUID, completedAt: Date, kind: String, durationMinutes: Int, perceivedDifficulty: Int?, painReported: Bool?, activityKind: ActivityKind? = nil) {
+        self.id = id
+        self.completedAt = completedAt
+        self.kind = kind
+        self.durationMinutes = durationMinutes
+        self.perceivedDifficulty = perceivedDifficulty
+        self.painReported = painReported
+        self.activityKind = activityKind
+    }
 }
 
 enum LocalPlanStatus: String, Codable { case planned, completed, skipped, adapted, recovery
@@ -391,10 +457,26 @@ final class LocalHistory {
         let end = calendar.date(byAdding: .day, value: 14, to: start) ?? start
         return plannedDays.filter { $0.scheduleDate >= start && $0.scheduleDate < end }.sorted { $0.scheduleDate < $1.scheduleDate }
     }
-    var todayPlan: LocalPlanDay? {
-        let today = Calendar.current.startOfDay(for: .now)
-        return currentWeekPlan.first { Calendar.current.isDate($0.date, inSameDayAs: today) }
+    var todayPrimaryPlan: LocalPlanDay? {
+        let calendar = Calendar.current
+        let items = plannedDays.filter { calendar.isDateInToday($0.scheduleDate) }
+        return items.sorted { lhs, rhs in
+            let lhsActionable = lhs.status.isActionable
+            let rhsActionable = rhs.status.isActionable
+            if lhsActionable != rhsActionable { return lhsActionable }
+            let lhsIncomplete = lhs.status != .completed && lhs.status != .skipped
+            let rhsIncomplete = rhs.status != .completed && rhs.status != .skipped
+            if lhsIncomplete != rhsIncomplete { return lhsIncomplete }
+            let lhsDistance = abs(lhs.scheduleDate.timeIntervalSinceNow)
+            let rhsDistance = abs(rhs.scheduleDate.timeIntervalSinceNow)
+            if lhsDistance != rhsDistance { return lhsDistance < rhsDistance }
+            let lhsRescheduled = lhs.rescheduledFromID != nil
+            let rhsRescheduled = rhs.rescheduledFromID != nil
+            if lhsRescheduled != rhsRescheduled { return lhsRescheduled }
+            return lhs.scheduleDate < rhs.scheduleDate
+        }.first
     }
+    var todayPlan: LocalPlanDay? { todayPrimaryPlan }
     var tomorrowPlan: LocalPlanDay? {
         guard let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: .now) else { return nil }
         return upcomingPlan.first { Calendar.current.isDate($0.scheduleDate, inSameDayAs: tomorrow) }
@@ -414,11 +496,39 @@ final class LocalHistory {
             hoursSinceLastGuidedSession: hoursSinceLastSession,
             hoursSinceLastPrivateSession: hoursSinceLastPrivateSession,
             guidedSessionsLast7Days: guidedSessionsLast7Days,
-            lateStopsLast3Sessions: lateStopsLast3Sessions
+            lateStopsLast3Sessions: lateStopsLast3Sessions,
+            perceivedControl: baseline?.perceivedControl,
+            weeklyMovementMinutes: baseline?.weeklyMovementMinutes,
+            activityLevel: baseline?.activityLevel,
+            preferredActivity: baseline?.preferredActivity,
+            programWeek: max(1, programWeek)
         )
     }
     var guidedEligibility: GuidedEligibility {
         EligibilityEngine().guidedEligibility(for: programContext)
+    }
+    func guidedEligibility(at date: Date) -> GuidedEligibility {
+        var context = programContext
+        context.hoursSinceLastGuidedSession = projectedHours(since: trainingSessions.map(\.completedAt), at: date)
+        context.hoursSinceLastPrivateSession = projectedHours(since: privateSessions.map(\.completedAt), at: date)
+        let cutoff = date.addingTimeInterval(-7 * 86_400)
+        context.guidedSessionsLast7Days = trainingSessions.filter { $0.completedAt >= cutoff && $0.completedAt < date }.count
+        return EligibilityEngine().guidedEligibility(for: context)
+    }
+    var guidedNextAvailableAt: Date? {
+        switch guidedEligibility.reason {
+        case .privateRecoveryWindow:
+            return privateSessions.first?.completedAt.addingTimeInterval(24 * 3_600)
+        case .recoveryWindow:
+            return trainingSessions.first?.completedAt.addingTimeInterval(24 * 3_600 + 1)
+        case .weeklyLimit:
+            return trainingSessions
+                .filter { $0.completedAt >= Date.now.addingTimeInterval(-7 * 86_400) }
+                .map { $0.completedAt.addingTimeInterval(7 * 86_400) }
+                .min()
+        case .ready, .baselineRequired, .safetyHold:
+            return nil
+        }
     }
     var effectiveProgramPhase: ProgramPhase {
         if hasSafetyBlock { return .safetyHold }
@@ -572,14 +682,38 @@ final class LocalHistory {
     /// Records a private session as a minimal recovery marker. Turning off
     /// details removes outcome and note but still lets the schedule protect recovery.
     @discardableResult
-    func addPrivateSession(startedAt: Date, elapsedSeconds: Int, pauseCount: Int, outcome: String?, note: String?, saveDetails: Bool) -> Bool {
+    func addPrivateSession(
+        startedAt: Date,
+        elapsedSeconds: Int,
+        pauseCount: Int,
+        outcome: String?,
+        note: String?,
+        saveDetails: Bool,
+        activeSeconds: Int,
+        totalRecoverySeconds: Int,
+        manualPauseCount: Int,
+        emergencyPauseCount: Int,
+        completedCycles: Int,
+        terminalState: String,
+        assistanceEnabled: Bool,
+        tooFast: Bool,
+        stoppedIntentionally: Bool,
+        painAfter: Bool,
+        irritationAfter: Bool
+    ) -> Bool {
         var updated = privateSessions
         updated.insert(
             LocalPrivateSession(
                 id: UUID(), startedAt: startedAt, completedAt: .now,
                 elapsedSeconds: max(0, elapsedSeconds), pauseCount: max(0, pauseCount),
                 outcome: saveDetails ? outcome : nil, note: saveDetails ? note : nil,
-                detailWasSaved: saveDetails, rulesetVersion: RulesetVersion.current.rawValue
+                detailWasSaved: saveDetails, rulesetVersion: RulesetVersion.current.rawValue,
+                activeSeconds: max(0, activeSeconds), totalRecoverySeconds: max(0, totalRecoverySeconds),
+                manualPauseCount: max(0, manualPauseCount), emergencyPauseCount: max(0, emergencyPauseCount),
+                completedCycles: max(0, completedCycles), terminalState: terminalState,
+                assistanceEnabled: assistanceEnabled, tooFast: tooFast,
+                stoppedIntentionally: stoppedIntentionally, painAfter: painAfter,
+                irritationAfter: irritationAfter
             ),
             at: 0
         )
@@ -590,13 +724,22 @@ final class LocalHistory {
     }
 
     @discardableResult
-    func addExercise(kind: String, durationMinutes: Int, perceivedDifficulty: Int? = nil, painReported: Bool? = nil) -> Bool {
+    func addExercise(kind: String, activityKind: ActivityKind, durationMinutes: Int, perceivedDifficulty: Int? = nil, painReported: Bool? = nil) -> Bool {
         var updated = exercises
-        updated.insert(LocalExerciseLog(id: UUID(), completedAt: .now, kind: kind, durationMinutes: durationMinutes, perceivedDifficulty: perceivedDifficulty, painReported: painReported), at: 0)
+        updated.insert(LocalExerciseLog(id: UUID(), completedAt: .now, kind: kind, durationMinutes: durationMinutes, perceivedDifficulty: perceivedDifficulty, painReported: painReported, activityKind: activityKind), at: 0)
         updated = Array(updated.prefix(100))
         guard save(updated, for: exerciseStorageKey) else { return false }
         exercises = updated
         return true
+    }
+
+    func recentExerciseDifficulty(for activityKind: ActivityKind) -> Int? {
+        exercises.first { log in
+            if let storedKind = log.activityKind { return storedKind == activityKind }
+            if activityKind == .strength { return log.kind.localizedCaseInsensitiveContains("kekuatan") }
+            if activityKind == .cardio { return !log.kind.localizedCaseInsensitiveContains("kekuatan") }
+            return false
+        }?.perceivedDifficulty
     }
 
     @discardableResult
@@ -689,7 +832,12 @@ final class LocalHistory {
                 id: value.id, startedAt: value.startedAt, completedAt: value.completedAt,
                 elapsedSeconds: value.elapsedSeconds, pauseCount: value.pauseCount,
                 outcome: value.outcome, note: nil, detailWasSaved: value.detailWasSaved,
-                rulesetVersion: value.rulesetVersion
+                rulesetVersion: value.rulesetVersion, activeSeconds: value.activeSeconds,
+                totalRecoverySeconds: value.totalRecoverySeconds, manualPauseCount: value.manualPauseCount,
+                emergencyPauseCount: value.emergencyPauseCount, completedCycles: value.completedCycles,
+                terminalState: value.terminalState, assistanceEnabled: value.assistanceEnabled,
+                tooFast: value.tooFast, stoppedIntentionally: value.stoppedIntentionally,
+                painAfter: value.painAfter, irritationAfter: value.irritationAfter
             )
         }
         guard privateSessionRepository.write(updatedPrivate) else { return false }
@@ -707,14 +855,29 @@ final class LocalHistory {
         let existing = plannedDays.filter { $0.scheduleDate >= start && $0.scheduleDate < end }
         let baseExisting = existing.filter { $0.rescheduledFromID == nil }
         let carriedReschedules = existing.filter { $0.rescheduledFromID != nil }
-        let generated = WeeklyPlanGenerator().generate(weekStarting: start, weeks: 2, context: programContext, calendar: calendar)
+        let scheduleHistory = ProgramScheduleHistory(
+            guidedSessionDates: trainingSessions.map(\.completedAt),
+            privateSessionDates: privateSessions.map(\.completedAt),
+            scheduledGuidedDates: carriedReschedules
+                .filter { $0.effectiveKind == .guided && $0.status.isActionable }
+                .map(\.scheduleDate)
+        )
+        let generated = WeeklyPlanGenerator().generate(
+            weekStarting: start,
+            weeks: 2,
+            context: programContext,
+            scheduleHistory: scheduleHistory,
+            referenceDate: .now,
+            calendar: calendar
+        )
+        let refreshPolicy = PlanRefreshPolicy()
         var updatedWindow = generated.map { item -> LocalPlanDay in
             let day = calendar.startOfDay(for: item.scheduledAt)
             let retained = baseExisting.first { calendar.isDate($0.scheduleDate, inSameDayAs: day) }
-            // Completed and skipped records are immutable historical evidence.
-            if let retained, retained.status.isTerminal { return retained }
-            // A user-driven adaptation remains in place unless a safety change requires a new protected plan.
-            if let retained, !force, retained.status == .adapted || retained.status == .recovery { return retained }
+            if let retained,
+               refreshPolicy.shouldRetainExisting(ProgramPlanItem(localDay: retained), now: .now, force: force) {
+                return retained
+            }
             return LocalPlanDay(
                 id: retained?.id ?? item.id,
                 date: day,
@@ -751,19 +914,21 @@ final class LocalHistory {
         let updated = (otherWeeks + updatedWindow).sorted { $0.scheduleDate < $1.scheduleDate }
         guard planRepository.write(updated) else { return false }
         plannedDays = updated
+        publishPlanChanged()
         return true
     }
 
     @discardableResult
-    func completeTodayPlan(kind: ActivityKind) -> Bool {
-        updateTodayPlan(kind: kind, status: .completed)
+    func completePrimaryPlanItem(performedKind: ActivityKind, completedAt: Date = .now) -> Bool {
+        guard let item = todayPrimaryPlan else { return false }
+        return completePlanItem(id: item.id, performedKind: performedKind, completedAt: completedAt)
     }
 
     @discardableResult
-    func completeTodayPlan(id: UUID, performedKind: ActivityKind) -> Bool {
+    func completePlanItem(id: UUID, performedKind: ActivityKind, completedAt: Date = .now) -> Bool {
         let calendar = Calendar.current
         guard let index = plannedDays.firstIndex(where: { $0.id == id }),
-              calendar.isDateInToday(plannedDays[index].scheduleDate),
+              calendar.isDate(plannedDays[index].scheduleDate, inSameDayAs: completedAt),
               plannedDays[index].status.isActionable
         else { return false }
         var updated = plannedDays
@@ -784,11 +949,12 @@ final class LocalHistory {
             adaptedAt: current.adaptedAt,
             rescheduledFromID: current.rescheduledFromID,
             revision: current.revision,
-            completedAt: .now,
+            completedAt: completedAt,
             performedKind: performedKind
         )
         guard planRepository.write(updated) else { return false }
         plannedDays = updated
+        publishPlanChanged()
         return true
     }
 
@@ -814,6 +980,7 @@ final class LocalHistory {
         )
         guard planRepository.write(updated) else { return false }
         plannedDays = updated
+        publishPlanChanged()
         return true
     }
 
@@ -847,6 +1014,7 @@ final class LocalHistory {
         updated.sort { $0.scheduleDate < $1.scheduleDate }
         guard planRepository.write(updated) else { return false }
         plannedDays = updated
+        publishPlanChanged()
         return true
     }
 
@@ -895,6 +1063,7 @@ final class LocalHistory {
         )
         guard planRepository.write(updated) else { return false }
         plannedDays = updated
+        publishPlanChanged()
         return true
     }
 
@@ -983,6 +1152,15 @@ final class LocalHistory {
         let weekday = calendar.component(.weekday, from: day)
         let daysFromMonday = (weekday + 5) % 7
         return calendar.date(byAdding: .day, value: -daysFromMonday, to: day) ?? day
+    }
+
+    private func projectedHours(since events: [Date], at date: Date) -> Double? {
+        guard let latest = events.filter({ $0 < date }).max() else { return nil }
+        return max(0, date.timeIntervalSince(latest) / 3_600)
+    }
+
+    private func publishPlanChanged() {
+        NotificationCenter.default.post(name: .tempoPlanDidChange, object: nil)
     }
 
     private func markPendingSafetyWrite() {

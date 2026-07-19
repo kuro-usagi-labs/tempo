@@ -375,7 +375,7 @@ public struct WeeklyPlanGenerator: Sendable {
         weeks: Int = 2,
         context: ProgramContext,
         scheduleHistory: ProgramScheduleHistory = ProgramScheduleHistory(),
-        referenceDate: Date = .now,
+        referenceDate: Date = Date(),
         calendar: Calendar = Calendar(identifier: .gregorian)
     ) -> [ProgramPlanItem] {
         let start = Self.startOfMonday(for: monday, calendar: calendar)

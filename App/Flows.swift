@@ -237,10 +237,10 @@ struct ExerciseDetailView: View {
         captureMatchingPlanIfNeeded()
         if !activityLogged {
             if painReported, !history.recordSafetyHold(reasonCode: "safety.exercise-symptom", severity: RecommendationSeverity.urgent.rawValue, source: "exercise") { saveFailed = true; return }
-            guard history.addExercise(kind: kind == .walk ? "Jalan santai" : "Kekuatan pemula", durationMinutes: kind == .walk ? 20 : 15, perceivedDifficulty: perceivedDifficulty, painReported: painReported) else { saveFailed = true; return }
+            guard history.addExercise(kind: kind == .walk ? "Jalan santai" : "Kekuatan pemula", activityKind: activityKind, durationMinutes: kind == .walk ? 20 : 15, perceivedDifficulty: perceivedDifficulty, painReported: painReported) else { saveFailed = true; return }
             activityLogged = true
         }
-        if let plannedDayID, !history.completeTodayPlan(id: plannedDayID, performedKind: activityKind) {
+        if let plannedDayID, !history.completePlanItem(id: plannedDayID, performedKind: activityKind, completedAt: .now) {
             saveFailed = true
             return
         }
@@ -612,7 +612,7 @@ struct GuidedSessionView: View {
 
     private func completePlannedGuidedActivity() -> Bool {
         guard let plannedDayID else { return true }
-        return history.completeTodayPlan(id: plannedDayID, performedKind: .guided)
+        return history.completePlanItem(id: plannedDayID, performedKind: .guided, completedAt: .now)
     }
 
     private func cancelAndDismiss() {
@@ -701,8 +701,8 @@ struct BreathingView: View {
     private func completePlannedActivity() {
         guard let plannedKind else { completionLogged = true; return }
         let saved: Bool
-        if let plannedDayID { saved = history.completeTodayPlan(id: plannedDayID, performedKind: plannedKind) }
-        else { saved = history.completeTodayPlan(kind: plannedKind) }
+        if let plannedDayID { saved = history.completePlanItem(id: plannedDayID, performedKind: plannedKind, completedAt: .now) }
+        else { saved = history.completePrimaryPlanItem(performedKind: plannedKind, completedAt: .now) }
         completionLogged = saved
         planSaveFailed = !saved
     }
@@ -894,8 +894,8 @@ struct LessonView: View {
     private func completeLesson() {
         guard let plannedKind else { return }
         let saved: Bool
-        if let plannedDayID { saved = history.completeTodayPlan(id: plannedDayID, performedKind: plannedKind) }
-        else { saved = history.completeTodayPlan(kind: plannedKind) }
+        if let plannedDayID { saved = history.completePlanItem(id: plannedDayID, performedKind: plannedKind, completedAt: .now) }
+        else { saved = history.completePrimaryPlanItem(performedKind: plannedKind, completedAt: .now) }
         completed = saved
         saveFailed = !saved
     }

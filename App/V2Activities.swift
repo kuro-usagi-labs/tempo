@@ -11,11 +11,9 @@ struct TempoCardioSessionScreen: View {
     @Environment(LocalHistory.self) private var history
     @Environment(TempoCoordinator.self) private var coordinator
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("hapticsEnabled") private var hapticsEnabled = true
     @State private var phase: CardioPhase = .ready
-    @State private var startedAt: Date?
-    @State private var pausedAt: Date?
-    @State private var pausedSeconds = 0
     @State private var elapsed = 0
     @State private var halfwayCueSent = false
     @State private var difficulty = 4
@@ -24,7 +22,7 @@ struct TempoCardioSessionScreen: View {
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private enum CardioPhase: Equatable { case ready, running, paused, reflection, saved }
-    private var prescription: ExercisePrescription? { ExercisePrescriptionEngine().prescription(for: .cardio, context: history.programContext, recentDifficulty: history.exercises.first?.perceivedDifficulty) }
+    private var prescription: ExercisePrescription? { ExercisePrescriptionEngine().prescription(for: .cardio, context: history.programContext, recentDifficulty: history.recentExerciseDifficulty(for: .cardio)) }
     private var totalSeconds: Int { (prescription?.targetMinutes ?? 20) * 60 }
     private var remaining: Int { max(0, totalSeconds - elapsed) }
 
@@ -41,6 +39,7 @@ struct TempoCardioSessionScreen: View {
         .padding(TempoDesign.Spacing.lg).frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(TempoDesign.Palette.canvas.ignoresSafeArea()).toolbar(.hidden, for: .navigationBar)
         .onReceive(ticker) { _ in update() }
+        .onChange(of: scenePhase) { _, newPhase in if newPhase != .active, phase == .running { phase = .paused } }
         .alert("Aktivitas belum tersimpan", isPresented: $saveFailed) { Button("Coba lagi") { save() } } message: { Text("TEMPO menunggu penyimpanan lokal sebelum mengubah status rencana.") }
         .accessibilityIdentifier("cardio.session")
     }
@@ -92,18 +91,18 @@ struct TempoCardioSessionScreen: View {
     }
 
     private func update() {
-        guard phase == .running, let startedAt else { return }
-        elapsed = max(elapsed, Int(Date.now.timeIntervalSince(startedAt)) - pausedSeconds)
+        guard scenePhase == .active, phase == .running else { return }
+        elapsed += 1
         if !halfwayCueSent && elapsed >= totalSeconds / 2 { halfwayCueSent = true; if hapticsEnabled { TempoFeedback.impact(.medium) } }
         if elapsed >= totalSeconds { phase = .reflection; if hapticsEnabled { TempoFeedback.notification(.success) } }
     }
-    private func start() { startedAt = .now; phase = .running; TempoFeedback.impact(.light) }
-    private func pause() { pausedAt = .now; phase = .paused; TempoFeedback.impact(.light) }
-    private func resume() { if let pausedAt { pausedSeconds += Int(Date.now.timeIntervalSince(pausedAt)) }; self.pausedAt = nil; phase = .running }
+    private func start() { phase = .running; TempoFeedback.impact(.light) }
+    private func pause() { phase = .paused; TempoFeedback.impact(.light) }
+    private func resume() { phase = .running }
     private func save() {
         if pain, !history.recordSafetyHold(reasonCode: "safety.exercise-symptom", severity: RecommendationSeverity.urgent.rawValue, source: "cardio") { saveFailed = true; return }
-        guard history.addExercise(kind: title, durationMinutes: max(1, elapsed / 60), perceivedDifficulty: difficulty, painReported: pain) else { saveFailed = true; return }
-        if let plannedDayID, !history.completeTodayPlan(id: plannedDayID, performedKind: .cardio) { saveFailed = true; return }
+        guard history.addExercise(kind: title, activityKind: .cardio, durationMinutes: max(1, elapsed / 60), perceivedDifficulty: difficulty, painReported: pain) else { saveFailed = true; return }
+        if let plannedDayID, !history.completePlanItem(id: plannedDayID, performedKind: .cardio, completedAt: .now) { saveFailed = true; return }
         phase = .saved
         if pain { coordinator.open(.healthCheck) }
     }
@@ -114,6 +113,7 @@ struct TempoStrengthCircuitScreen: View {
     @Environment(LocalHistory.self) private var history
     @Environment(TempoCoordinator.self) private var coordinator
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("hapticsEnabled") private var hapticsEnabled = true
     @State private var phase: StrengthPhase = .ready
     @State private var movementIndex = 0
@@ -122,10 +122,11 @@ struct TempoStrengthCircuitScreen: View {
     @State private var difficulty = 4
     @State private var pain = false
     @State private var saveFailed = false
+    @State private var elapsed = 0
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     private enum StrengthPhase: Equatable { case ready, working, rest, reflection, saved }
 
-    private var prescription: ExercisePrescription { ExercisePrescriptionEngine().prescription(for: .strength, context: history.programContext, recentDifficulty: history.exercises.first?.perceivedDifficulty) ?? ExercisePrescription(mode: .strengthCircuit, targetMinutes: 16, sets: 2, repetitions: 8, restSeconds: 45, reason: .plannedStrength) }
+    private var prescription: ExercisePrescription { ExercisePrescriptionEngine().prescription(for: .strength, context: history.programContext, recentDifficulty: history.recentExerciseDifficulty(for: .strength)) ?? ExercisePrescription(mode: .strengthCircuit, targetMinutes: 16, sets: 2, repetitions: 8, restSeconds: 45, reason: .plannedStrength) }
     private let movements = ["Wall / incline push-up", "Chair squat", "Glute bridge", "Bird dog"]
     private var currentMovement: String { movements[min(movementIndex, movements.count - 1)] }
 
@@ -140,7 +141,11 @@ struct TempoStrengthCircuitScreen: View {
         }
         .padding(TempoDesign.Spacing.lg).frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(TempoDesign.Palette.canvas.ignoresSafeArea()).toolbar(.hidden, for: .navigationBar)
-        .onReceive(ticker) { _ in if phase == .rest && restRemaining > 0 { restRemaining -= 1; if restRemaining == 0 { phase = .working; TempoFeedback.impact(.light) } } }
+        .onReceive(ticker) { _ in
+            guard scenePhase == .active else { return }
+            if phase == .working || phase == .rest { elapsed += 1 }
+            if phase == .rest && restRemaining > 0 { restRemaining -= 1; if restRemaining == 0 { phase = .working; TempoFeedback.impact(.light) } }
+        }
         .alert("Aktivitas belum tersimpan", isPresented: $saveFailed) { Button("Coba lagi") { save() } } message: { Text("Catatan dan status rencana harus tersimpan lokal terlebih dahulu.") }
         .accessibilityIdentifier("strength.session")
     }
@@ -185,8 +190,8 @@ struct TempoStrengthCircuitScreen: View {
     }
     private func save() {
         if pain, !history.recordSafetyHold(reasonCode: "safety.exercise-symptom", severity: RecommendationSeverity.urgent.rawValue, source: "strength") { saveFailed = true; return }
-        guard history.addExercise(kind: "Kekuatan ringan", durationMinutes: prescription.targetMinutes, perceivedDifficulty: difficulty, painReported: pain) else { saveFailed = true; return }
-        if let plannedDayID, !history.completeTodayPlan(id: plannedDayID, performedKind: .strength) { saveFailed = true; return }
+        guard history.addExercise(kind: "Kekuatan ringan", activityKind: .strength, durationMinutes: max(1, elapsed / 60), perceivedDifficulty: difficulty, painReported: pain) else { saveFailed = true; return }
+        if let plannedDayID, !history.completePlanItem(id: plannedDayID, performedKind: .strength, completedAt: .now) { saveFailed = true; return }
         phase = .saved
         if pain { coordinator.open(.healthCheck) }
     }
@@ -223,7 +228,7 @@ struct TempoLessonScreen: View {
         .alert("Status belum tersimpan", isPresented: $saveFailed) { Button("Coba lagi") { complete() } } message: { Text("Materi tidak akan ditandai selesai sampai penyimpanan lokal berhasil.") }
     }
     private func complete() {
-        if let plannedDayID, !history.completeTodayPlan(id: plannedDayID, performedKind: .education) { saveFailed = true; return }
+        if let plannedDayID, !history.completePlanItem(id: plannedDayID, performedKind: .education, completedAt: .now) { saveFailed = true; return }
         completed = true
     }
 }

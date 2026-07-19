@@ -3,6 +3,7 @@ import UserNotifications
 
 extension Notification.Name {
     static let tempoSkipTodayPlan = Notification.Name("tempo.skip-today-plan")
+    static let tempoPlanDidChange = Notification.Name("tempo.plan-did-change")
 }
 
 @MainActor

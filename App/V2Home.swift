@@ -160,10 +160,10 @@ struct TempoTodayScreen: View {
         VStack(alignment: .leading, spacing: TempoDesign.Spacing.sm) {
             TempoSectionHeader("Butuh keputusan cepat?", detail: "Tiga langkah singkat, tanpa formulir panjang.")
             TempoPrimaryButton(discreetTerminology ? "Mulai sesi privat" : "Aku mau onani sekarang", icon: "hand.raised.fill") {
-                coordinator.open(.immediateAction)
+                coordinator.open(.immediateAction(5))
             }
             TempoSecondaryButton("Aku sedang sangat terangsang", icon: "bolt.heart.fill", tone: .caution) {
-                coordinator.open(.immediateAction)
+                coordinator.open(.immediateAction(8))
             }
         }
     }
@@ -257,7 +257,7 @@ struct TempoProgramScreen: View {
 
     private var currentWeekStart: Date { WeeklyPlanGenerator.startOfMonday(for: selectedDay) }
     private var weekDays: [Date] { (0..<7).compactMap { Calendar.current.date(byAdding: .day, value: $0, to: currentWeekStart) } }
-    private var selectedItems: [LocalPlanDay] { history.upcomingPlan.filter { Calendar.current.isDate($0.scheduleDate, inSameDayAs: selectedDay) } }
+    private var selectedItems: [LocalPlanDay] { history.plannedDays.filter { Calendar.current.isDate($0.scheduleDate, inSameDayAs: selectedDay) }.sorted { $0.scheduleDate < $1.scheduleDate } }
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -344,7 +344,7 @@ struct TempoProgramScreen: View {
         }
     }
 
-    private func hasItem(on date: Date) -> Bool { history.upcomingPlan.contains { Calendar.current.isDate($0.scheduleDate, inSameDayAs: date) } }
+    private func hasItem(on date: Date) -> Bool { history.plannedDays.contains { Calendar.current.isDate($0.scheduleDate, inSameDayAs: date) } }
 }
 
 struct TempoPlanDetailScreen: View {
@@ -379,7 +379,11 @@ struct TempoPlanDetailScreen: View {
                             }
                         }
                         if item.status.isActionable {
-                            TempoPrimaryButton("Mulai aktivitas", icon: "play.fill") { open(item) }
+                            if Calendar.current.isDateInToday(item.scheduleDate) {
+                                TempoPrimaryButton("Mulai aktivitas", icon: "play.fill") { open(item) }
+                            } else if item.scheduleDate > .now {
+                                TempoStatusBadge("Aktivitas tersedia pada tanggalnya.", tone: .neutral, icon: "calendar")
+                            }
                             TempoSecondaryButton("Saya tidak tersedia", icon: "calendar.badge.exclamationmark", tone: .caution) {
                                 if history.markPlanUnavailable(id: item.id) { dismiss() } else { actionFailed = true }
                             }

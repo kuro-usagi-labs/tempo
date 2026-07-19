@@ -10,9 +10,10 @@ enum TempoTab: Hashable {
 
 enum TempoRoute: Hashable {
     case plan(UUID)
-    case immediateAction
+    case immediateAction(Int)
     case guided(UUID?)
-    case privateSession
+    case privateSession([ImmediateActionAdvisory])
+    case guidedUnavailable(GuidedEligibilityReason, String, Date?)
     case cardio(UUID?)
     case strength(UUID?)
     case breathing(UUID?, String, Int)
@@ -88,6 +89,20 @@ struct TempoV2AppShell: View {
         .onReceive(NotificationCenter.default.publisher(for: .tempoSkipTodayPlan)) { _ in
             history.applyPendingPlanActions()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .tempoPlanDidChange)) { _ in
+            guard remindersEnabled else {
+                LocalNotifications.removeDailyPlan()
+                return
+            }
+            Task {
+                await LocalNotifications.requestAndSyncPlan(
+                    history.upcomingPlan,
+                    fallbackHour: reminderHour,
+                    windowEndHour: history.baseline?.reminderEndHour ?? 21,
+                    soundEnabled: notificationSoundsEnabled
+                )
+            }
+        }
     }
 
     private var unlockCover: some View {
@@ -149,9 +164,11 @@ struct TempoRouteDestination: View {
     var body: some View {
         switch route {
         case let .plan(id): TempoPlanDetailScreen(planID: id)
-        case .immediateAction: TempoImmediateActionScreen()
+        case let .immediateAction(initialIntensity): TempoImmediateActionScreen(initialIntensity: initialIntensity)
         case let .guided(id): TempoGuidedSessionScreen(plannedDayID: id)
-        case .privateSession: TempoPrivateSessionTimerScreen()
+        case let .privateSession(advisories): TempoPrivateSessionTimerScreen(advisories: advisories)
+        case let .guidedUnavailable(reason, message, nextAvailableAt):
+            TempoGuidedUnavailableScreen(reason: reason, message: message, nextAvailableAt: nextAvailableAt)
         case let .cardio(id): TempoCardioSessionScreen(plannedDayID: id)
         case let .strength(id): TempoStrengthCircuitScreen(plannedDayID: id)
         case let .breathing(id, title, seconds): TempoBreathingSessionScreen(plannedDayID: id, title: title, duration: seconds)
