@@ -1,78 +1,8 @@
 import SwiftUI
 
 struct RootView: View {
-    @Environment(\.scenePhase) private var scenePhase
-    @Environment(LocalHistory.self) private var history
-    @AppStorage("biometricLockEnabled") private var biometricLockEnabled = false
-    @AppStorage("dailyPlanRemindersEnabled") private var remindersEnabled = false
-    @AppStorage("dailyPlanReminderHour") private var reminderHour = 9
-    @AppStorage("notificationSoundsEnabled") private var notificationSoundsEnabled = false
-    @State private var privacyCovered = false
-    @State private var isUnlocked = false
-    @AccessibilityFocusState private var unlockFocused: Bool
-    @AppStorage("onboardingCompleted") private var onboardingCompleted = false
-    private var isLocked: Bool { onboardingCompleted && biometricLockEnabled && !isUnlocked }
     var body: some View {
-        ZStack {
-            Group {
-                if onboardingCompleted {
-                    TabView {
-                        TodayView().tabItem { Label("Hari ini", systemImage: "sparkles") }
-                        TrainingView().tabItem { Label("Latihan", systemImage: "figure.mind.and.body") }
-                        ProgressView().tabItem { Label("Progres", systemImage: "chart.line.uptrend.xyaxis") }
-                        LearnView().tabItem { Label("Belajar", systemImage: "book") }
-                        SettingsView().tabItem { Label("Pengaturan", systemImage: "gearshape") }
-                    }.tint(Color(red: 0.47, green: 0.42, blue: 1))
-                } else {
-                    OnboardingView()
-                }
-            }
-            .allowsHitTesting(!isLocked && !privacyCovered)
-            .accessibilityHidden(isLocked || privacyCovered)
-
-            if isLocked && !privacyCovered {
-                VStack(spacing: 18) {
-                    Image(systemName: "lock.fill").font(.system(size: 48))
-                    Text("TEMPO terkunci").font(.title.bold())
-                    Text("Gunakan biometrik atau kode perangkat.").foregroundStyle(.secondary)
-                    Button("Buka") { Task { isUnlocked = await PrivacyLock.authenticate() } }
-                        .buttonStyle(.borderedProminent)
-                        .accessibilityFocused($unlockFocused)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.black.ignoresSafeArea())
-                .onAppear { unlockFocused = true }
-            }
-            if privacyCovered {
-                ZStack {
-                    Color.black.ignoresSafeArea()
-                    VStack(spacing: 12) {
-                        Image(systemName: "circle.fill").font(.system(size: 36)).foregroundStyle(.indigo)
-                        Text("TEMPO").font(.headline)
-                    }
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Layar privat TEMPO")
-            }
-        }
-        .onChange(of: scenePhase) { _, phase in
-            if phase != .active {
-                privacyCovered = true
-                if biometricLockEnabled { isUnlocked = false }
-            }
-            if phase == .active {
-                privacyCovered = false
-                history.refreshPlan()
-                history.applyPendingPlanActions()
-                if biometricLockEnabled && !PrivacyLock.isAvailable {
-                    biometricLockEnabled = false
-                    isUnlocked = true
-                }
-                if remindersEnabled { Task { await LocalNotifications.requestAndScheduleDailyPlan(hour: reminderHour, soundEnabled: notificationSoundsEnabled) } }
-            }
-        }
-        .onChange(of: biometricLockEnabled) { _, enabled in if enabled && scenePhase == .active { isUnlocked = true } }
-        .onReceive(NotificationCenter.default.publisher(for: .tempoSkipTodayPlan)) { _ in history.applyPendingPlanActions() }
+        TempoV2AppShell()
     }
 }
 

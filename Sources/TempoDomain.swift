@@ -1,10 +1,10 @@
 import Foundation
 
-public enum ProgramPhase: String, Codable, CaseIterable, Sendable { case assessmentRequired, awareness, basicControl, stability, transfer, independence, safetyHold }
-public enum UrgeTrigger: String, Codable, CaseIterable, Sendable { case desire, boredom, stress, loneliness, sleep }
-public enum UrgeIntent: String, Codable, CaseIterable, Sendable { case calm, training, privateSession }
-public enum RecommendedAction: String, Codable, Sendable { case healthCheck, recovery, regulate, urgeSurf, guidedSession, privateSession, exercise, education }
-public enum RecommendationSeverity: String, Codable, Sendable { case normal, caution, medical, urgent }
+public enum ProgramPhase: String, Codable, CaseIterable, Sendable, Hashable { case assessmentRequired, awareness, basicControl, stability, transfer, independence, safetyHold }
+public enum UrgeTrigger: String, Codable, CaseIterable, Sendable, Hashable { case desire, boredom, stress, loneliness, sleep }
+public enum UrgeIntent: String, Codable, CaseIterable, Sendable, Hashable { case calm, training, privateSession }
+public enum RecommendedAction: String, Codable, Sendable, Hashable { case healthCheck, recovery, regulate, urgeSurf, guidedSession, privateSession, exercise, education }
+public enum RecommendationSeverity: String, Codable, Sendable, Hashable { case normal, caution, medical, urgent }
 
 public struct DecisionContext: Equatable, Sendable {
     public var programPhase: ProgramPhase = .assessmentRequired
@@ -30,8 +30,8 @@ public struct Recommendation: Equatable, Sendable {
     }
 }
 
-public enum GuidedEligibilityReason: String, Codable, Sendable {
-    case ready, baselineRequired, safetyHold, recoveryWindow, weeklyLimit
+public enum GuidedEligibilityReason: String, Codable, Sendable, Hashable {
+    case ready, baselineRequired, safetyHold, recoveryWindow, privateRecoveryWindow, weeklyLimit
 }
 
 public struct GuidedEligibility: Equatable, Sendable {
@@ -66,7 +66,7 @@ public struct GuidedEligibilityEvaluator: Sendable {
 }
 
 public struct RuleEngine: Sendable {
-    public static let rulesetVersion = "1.0.0"
+    public static let rulesetVersion = RulesetVersion.current.rawValue
     public init() {}
     public func evaluate(_ c: DecisionContext) -> Recommendation {
         if c.bloodReported || c.fever || c.pain || c.pelvicOrTesticularPain {
@@ -96,8 +96,8 @@ public struct RuleEngine: Sendable {
     }
 }
 
-public enum GuidedSessionState: String, Codable, Sendable { case precheck, prepare, activeLow, activeRising, warning, pausedRecovery, resumeReady, completed, earlyCompletion, cancelled, safetyAbort, timeLimitReached }
-public enum GuidedPauseReason: String, Codable, Sendable { case manual, threshold, almostTooLate, interruption }
+public enum GuidedSessionState: String, Codable, Sendable, Hashable { case precheck, prepare, activeLow, activeRising, warning, pausedRecovery, resumeReady, completed, earlyCompletion, cancelled, safetyAbort, timeLimitReached }
+public enum GuidedPauseReason: String, Codable, Sendable, Hashable { case manual, threshold, almostTooLate, interruption }
 public struct GuidedSessionMachine: Equatable, Sendable {
     public static let absoluteMaximumDurationSeconds = 1_500
     public private(set) var state: GuidedSessionState = .precheck
@@ -119,11 +119,16 @@ public struct GuidedSessionMachine: Equatable, Sendable {
         if level >= threshold {
             state = .warning
             lastPauseReason = .threshold
-            state = .pausedRecovery
             return true
         }
         state = level >= 6 ? .activeRising : .activeLow
         return false
+    }
+    /// Keeps warning as a visible state until the UI has delivered its explicit warning cue.
+    @discardableResult public mutating func advanceWarningToRecovery() -> Bool {
+        guard state == .warning else { return false }
+        state = .pausedRecovery
+        return true
     }
     @discardableResult public mutating func pause(reason: GuidedPauseReason = .manual) -> Bool {
         guard [.activeLow, .activeRising, .warning].contains(state) else { return false }
@@ -156,7 +161,7 @@ public struct GuidedSessionMachine: Equatable, Sendable {
     public mutating func abortForSafety() { guard !isTerminal else { return }; state = .safetyAbort }
 }
 
-public enum ActivityKind: String, Codable, Sendable { case guided, breathing, cardio, strength, recovery, education, review }
+public enum ActivityKind: String, Codable, Sendable, Hashable { case guided, breathing, cardio, strength, recovery, education, review }
 public struct PlannedActivity: Equatable, Sendable { public let day: Int; public let kind: ActivityKind; public init(day: Int, kind: ActivityKind) { self.day = day; self.kind = kind } }
 public struct PlanActivityResolver: Sendable {
     public init() {}
@@ -164,6 +169,20 @@ public struct PlanActivityResolver: Sendable {
         if exerciseRestricted && (scheduledKind == .cardio || scheduledKind == .strength) { return .recovery }
         if isToday && scheduledKind == .guided && !guidedAllowed { return .recovery }
         return scheduledKind
+    }
+
+    public func resolve(_ kind: ActivityKind, context: ProgramContext) -> (kind: ActivityKind, reasons: [PlanReason]) {
+        if context.hasSafetyHold { return (.recovery, [.safetyHold]) }
+        if context.exerciseRestricted && (kind == .cardio || kind == .strength) { return (.recovery, [.exerciseRestriction]) }
+        if kind == .guided {
+            let eligibility = EligibilityEngine().guidedEligibility(for: context)
+            if !eligibility.isAllowed {
+                return (.recovery, [eligibility.reason == .privateRecoveryWindow ? .privateRecoveryWindow : .guidedRecoveryWindow])
+            }
+            if context.anxiety >= 8 { return (.breathing, [.highAnxiety]) }
+            if (context.sleepHours ?? 8) < 5.5 { return (.recovery, [.lowSleep]) }
+        }
+        return (kind, [])
     }
 }
 public struct WeeklyScheduler: Sendable {
@@ -183,7 +202,7 @@ public struct WeeklyScheduler: Sendable {
         }
         switch phase {
         case .awareness:
-            return [.init(day: 0, kind: .breathing), .init(day: 1, kind: .guided), .init(day: 2, kind: .recovery), .init(day: 3, kind: .cardio), .init(day: 4, kind: .guided), .init(day: 5, kind: .strength), .init(day: 6, kind: .review)]
+            return [.init(day: 0, kind: .guided), .init(day: 1, kind: .cardio), .init(day: 2, kind: .recovery), .init(day: 3, kind: .guided), .init(day: 4, kind: .strength), .init(day: 5, kind: .cardio), .init(day: 6, kind: .review)]
         case .basicControl:
             return [.init(day: 0, kind: .cardio), .init(day: 1, kind: .guided), .init(day: 2, kind: .strength), .init(day: 3, kind: .breathing), .init(day: 4, kind: .guided), .init(day: 5, kind: .recovery), .init(day: 6, kind: .review)]
         case .stability:

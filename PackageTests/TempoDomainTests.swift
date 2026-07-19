@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 @testable import TempoDomain
 
@@ -48,7 +49,7 @@ final class TempoDomainTests: XCTestCase {
 
     func testSchedulerKeepsGuidedSessionsApart() {
         let days = WeeklyScheduler().beginnerPlan().filter { $0.kind == .guided }.map(\.day)
-        XCTAssertEqual(days, [1, 4])
+        XCTAssertEqual(days, [0, 3])
     }
 
     func testSchedulerAlwaysProducesSevenDaysAndRecovery() {
@@ -70,6 +71,8 @@ final class TempoDomainTests: XCTestCase {
     func testSessionRequiresRecoveryBeforeResume() {
         var session = GuidedSessionMachine()
         session.start(); session.beginActive(); session.rising(level: 7, threshold: 7)
+        XCTAssertEqual(session.state, .warning)
+        XCTAssertTrue(session.advanceWarningToRecovery())
         XCTAssertEqual(session.state, .pausedRecovery)
         session.recovered(level: 5, elapsedSeconds: 30)
         XCTAssertEqual(session.state, .pausedRecovery)
@@ -160,13 +163,16 @@ final class TempoDomainTests: XCTestCase {
         XCTAssertTrue(evaluator.evaluate(programPhase: .awareness, hoursSinceLastSession: nil, guidedSessionsLast7Days: 0).isAllowed)
     }
 
-    func testThresholdWarningIsOneShotAndStartsRecovery() {
+    func testThresholdWarningStaysVisibleUntilExplicitRecoveryAdvance() {
         var session = GuidedSessionMachine()
         session.start(); session.beginActive()
         XCTAssertTrue(session.rising(level: 7, threshold: 7))
-        XCTAssertEqual(session.state, .pausedRecovery)
+        XCTAssertEqual(session.state, .warning)
         XCTAssertEqual(session.lastPauseReason, .threshold)
         XCTAssertFalse(session.rising(level: 8, threshold: 7))
+        XCTAssertTrue(session.advanceWarningToRecovery())
+        XCTAssertEqual(session.state, .pausedRecovery)
+        XCTAssertFalse(session.advanceWarningToRecovery())
     }
 
     func testElapsedTimeCannotMoveBackwardAndStopsWhilePaused() {
@@ -211,5 +217,184 @@ final class TempoDomainTests: XCTestCase {
             for pair in zip(guidedDays, guidedDays.dropFirst()) { XCTAssertGreaterThanOrEqual(pair.1 - pair.0, 2) }
             XCTAssertTrue(plan.contains { $0.kind == .recovery })
         }
+    }
+
+    func testWeeklyPlanGeneratorProducesRealMondayToSundayAwarenessPlan() {
+        let calendar = utcCalendar
+        let thursday = date(2026, 7, 16, hour: 9, calendar: calendar)
+        let context = ProgramContext(phase: .awareness, baselineCompleted: true)
+
+        let plan = WeeklyPlanGenerator().generate(
+            weekStarting: thursday,
+            weeks: 1,
+            context: context,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(plan.count, 7)
+        XCTAssertEqual(plan.map { calendar.component(.weekday, from: $0.scheduledAt) }, [2, 3, 4, 5, 6, 7, 1])
+        XCTAssertEqual(plan.filter { $0.effectiveKind == .guided }.map { calendar.component(.weekday, from: $0.scheduledAt) }, [2, 5])
+        XCTAssertTrue(plan.allSatisfy { $0.phase == .awareness && $0.rulesetVersion == .current })
+        XCTAssertTrue(plan.first?.reasons.contains(.awarenessFoundation) == true)
+        XCTAssertTrue(plan.allSatisfy { $0.estimatedMinutes > 0 })
+    }
+
+    func testWeeklyPlanGeneratorIsDeterministicAndAppliesSafetyAdaptation() {
+        let calendar = utcCalendar
+        let monday = date(2026, 7, 13, hour: 12, calendar: calendar)
+        var context = ProgramContext(phase: .awareness, baselineCompleted: true, exerciseRestricted: true)
+        let first = WeeklyPlanGenerator().generate(weekStarting: monday, weeks: 2, context: context, calendar: calendar)
+        let second = WeeklyPlanGenerator().generate(weekStarting: monday, weeks: 2, context: context, calendar: calendar)
+
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(first.count, 14)
+        XCTAssertTrue(first.filter { $0.prescribedKind == .cardio || $0.prescribedKind == .strength }.allSatisfy {
+            $0.effectiveKind == .recovery && $0.status == .recovery && $0.reasons.contains(.exerciseRestriction)
+        })
+
+        context.hasSafetyHold = true
+        let held = WeeklyPlanGenerator().generate(weekStarting: monday, weeks: 1, context: context, calendar: calendar)
+        XCTAssertTrue(held.allSatisfy { $0.phase == .safetyHold && $0.effectiveKind == .recovery })
+        XCTAssertTrue(held.allSatisfy { $0.reasons.contains(.safetyHold) })
+    }
+
+    func testEligibilityEngineBlocksGuidedSessionDuringPrivateRecovery() {
+        let engine = EligibilityEngine()
+        let recovering = ProgramContext(
+            phase: .awareness,
+            baselineCompleted: true,
+            hoursSinceLastPrivateSession: 23,
+            guidedSessionsLast7Days: 0
+        )
+        let available = ProgramContext(
+            phase: .awareness,
+            baselineCompleted: true,
+            hoursSinceLastPrivateSession: 24,
+            guidedSessionsLast7Days: 0
+        )
+
+        XCTAssertEqual(engine.guidedEligibility(for: recovering).reason, .privateRecoveryWindow)
+        XCTAssertFalse(engine.guidedEligibility(for: recovering).isAllowed)
+        XCTAssertTrue(engine.guidedEligibility(for: available).isAllowed)
+    }
+
+    func testSessionPrescriptionSoftensAfterRepeatedLateStops() {
+        let engine = SessionPrescriptionEngine()
+        let normal = engine.prescription(for: ProgramContext(phase: .basicControl, baselineCompleted: true))
+        let adapted = engine.prescription(for: ProgramContext(
+            phase: .basicControl,
+            baselineCompleted: true,
+            anxiety: 8,
+            sleepHours: 5,
+            lateStopsLast3Sessions: 2
+        ))
+
+        XCTAssertEqual(normal.maximumCycles, 3)
+        XCTAssertEqual(normal.pauseThreshold, 7)
+        XCTAssertEqual(normal.recoverySeconds, 40)
+        XCTAssertEqual(adapted.maximumCycles, 2)
+        XCTAssertEqual(adapted.pauseThreshold, 6)
+        XCTAssertEqual(adapted.recoverySeconds, 60)
+        XCTAssertLessThan(adapted.activeTargetSeconds, normal.activeTargetSeconds)
+        XCTAssertTrue(adapted.reasons.contains(.highAnxiety))
+        XCTAssertTrue(adapted.reasons.contains(.lowSleep))
+        XCTAssertTrue(adapted.reasons.contains(.lateStopAdaptation))
+    }
+
+    func testAdaptationPolicyMaintainsFortyEightHourGuidedSpacing() {
+        let calendar = utcCalendar
+        let original = planItem(
+            scheduledAt: date(2026, 7, 13, hour: 18, minute: 30, calendar: calendar),
+            kind: .guided
+        )
+        let blocker = planItem(
+            scheduledAt: date(2026, 7, 14, hour: 18, minute: 30, calendar: calendar),
+            kind: .guided
+        )
+        let policy = AdaptationPolicy()
+
+        let rescheduled = policy.safeRescheduleDate(
+            for: original,
+            after: date(2026, 7, 13, hour: 8, calendar: calendar),
+            items: [original, blocker],
+            calendar: calendar
+        )
+
+        guard let rescheduled else {
+            return XCTFail("Expected a safely spaced replacement day")
+        }
+        XCTAssertEqual(rescheduled, date(2026, 7, 16, calendar: calendar))
+        XCTAssertGreaterThanOrEqual(abs(blocker.scheduledAt.timeIntervalSince(rescheduled)), 48 * 3_600)
+    }
+
+    func testProgramPlanItemPreservesOriginalPrescriptionAndTerminalHistory() {
+        let scheduled = date(2026, 7, 13, hour: 18, minute: 30, calendar: utcCalendar)
+        let original = planItem(scheduledAt: scheduled, kind: .guided, reasons: [.awarenessFoundation])
+        let adapted = original.adapted(to: .recovery, reasons: [.unavailable], at: scheduled)
+        let completed = adapted.completed(as: .recovery, at: scheduled)
+
+        XCTAssertEqual(original.prescribedKind, .guided)
+        XCTAssertEqual(adapted.prescribedKind, .guided)
+        XCTAssertEqual(adapted.effectiveKind, .recovery)
+        XCTAssertEqual(adapted.reasons, [.awarenessFoundation])
+        XCTAssertEqual(adapted.adaptation?.originalKind, .guided)
+        XCTAssertEqual(completed.status, .completed)
+        XCTAssertEqual(completed.adapted(to: .cardio, reasons: [.postponed], at: scheduled), completed)
+        XCTAssertEqual(completed.completed(as: .cardio, at: scheduled), completed)
+    }
+
+    func testProgressEngineUsesOnlyDueNonRecoveryItemsAndWaitsForSamples() {
+        let calendar = utcCalendar
+        let start = date(2026, 7, 13, hour: 9, calendar: calendar)
+        let completed = planItem(scheduledAt: start, kind: .cardio).completed(as: .cardio, at: start)
+        let missed = planItem(scheduledAt: date(2026, 7, 14, hour: 9, calendar: calendar), kind: .strength)
+        let recovery = planItem(scheduledAt: start, kind: .recovery).adapted(to: .recovery, reasons: [.nervousSystemRecovery], at: start)
+        let future = planItem(scheduledAt: date(2026, 7, 17, hour: 9, calendar: calendar), kind: .guided)
+        let scores = ScoreCalculator().calculate(ScoreInputs(
+            earlyPauseRate: 0.7,
+            loggingCompleteness: 0.7,
+            tensionRecognitionRate: 0.7,
+            escalationPredictionRate: 0.7,
+            successfulCycleRatio: 0.65,
+            controlledCompletionRatio: 0.65,
+            thresholdCompliance: 0.65,
+            recoveryCompletionRatio: 0.75,
+            calmRate: 0.6,
+            adherenceRate: 0.5
+        ))
+        let engine = ProgressEngine()
+
+        XCTAssertEqual(engine.presentation(sessionCount: 0, scores: scores), .baseline)
+        XCTAssertEqual(engine.presentation(sessionCount: 2, scores: scores), .collecting(samplesNeeded: 1))
+        XCTAssertEqual(engine.presentation(sessionCount: 3, scores: scores), .ready(scores))
+        XCTAssertEqual(
+            engine.consistency(for: [completed, missed, recovery, future], through: date(2026, 7, 14, hour: 23, calendar: calendar), calendar: calendar),
+            0.5
+        )
+        XCTAssertNil(engine.consistency(for: [future, recovery], through: start, calendar: calendar))
+    }
+
+    private var utcCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        return calendar
+    }
+
+    private func date(_ year: Int, _ month: Int, _ day: Int, hour: Int = 0, minute: Int = 0, calendar: Calendar) -> Date {
+        calendar.date(from: DateComponents(year: year, month: month, day: day, hour: hour, minute: minute))!
+    }
+
+    private func planItem(
+        scheduledAt: Date,
+        kind: ActivityKind,
+        reasons: [PlanReason] = [.plannedMovement]
+    ) -> ProgramPlanItem {
+        ProgramPlanItem(
+            scheduledAt: scheduledAt,
+            prescribedKind: kind,
+            estimatedMinutes: 20,
+            phase: .awareness,
+            reasons: reasons
+        )
     }
 }

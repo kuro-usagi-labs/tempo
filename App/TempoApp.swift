@@ -24,6 +24,18 @@ final class TempoAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificatio
 @main
 struct TempoApp: App {
     @UIApplicationDelegateAdaptor(TempoAppDelegate.self) private var appDelegate
-    @State private var history = LocalHistory()
+    @State private var history: LocalHistory
+
+    init() {
+        if ProcessInfo.processInfo.arguments.contains("-tempo-ui-testing-reset") {
+            _ = ProtectedFileStore.removeAll()
+            _ = SecureLocalStore.removeAll()
+            if let bundleID = Bundle.main.bundleIdentifier {
+                UserDefaults.standard.removePersistentDomain(forName: bundleID)
+            }
+        }
+        _history = State(initialValue: LocalHistory())
+    }
+
     var body: some Scene { WindowGroup { RootView().environment(history).preferredColorScheme(.dark) } }
 }
