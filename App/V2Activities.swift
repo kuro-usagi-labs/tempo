@@ -262,5 +262,4 @@ struct TempoWeeklyReviewScreen: View {
         if history.isHighStress { return "Kecemasan yang tinggi adalah alasan untuk menurunkan tempo, bukan alasan untuk memaksa konsistensi." }
         if completedCount == dueItems.count && !dueItems.isEmpty { return "Kamu menjaga ritme pada semua langkah yang sudah jatuh tempo. Pertahankan jeda yang realistis." }
         return "Perhatikan waktu atau konteks yang membuat jeda lebih mudah. Rencana dapat disesuaikan tanpa perlu mengejar yang terlewat." }
-    }
 }

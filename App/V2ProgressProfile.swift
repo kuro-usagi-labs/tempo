@@ -104,7 +104,6 @@ struct TempoProgressScreen: View {
         if let change = history.urgeOutcomes.last, change.finalIntensity < change.initialIntensity { return "Reset terakhir menurunkan intensitas. Perhatikan konteks yang membantumu memberi jeda." }
         if history.privateSessions.isEmpty && history.sessions.isEmpty { return "Belum ada pola sesi untuk disimpulkan. Mulai dari satu langkah ringan yang dijadwalkan." }
         return "Lihat minggu ini sebagai pola, bukan ujian. Penyesuaian yang aman lebih berguna daripada mengejar angka." }
-    }
 }
 
 struct TempoProfileScreen: View {
