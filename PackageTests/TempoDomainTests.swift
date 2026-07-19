@@ -323,7 +323,7 @@ final class TempoDomainTests: XCTestCase {
         guard let rescheduled else {
             return XCTFail("Expected a safely spaced replacement day")
         }
-        XCTAssertEqual(rescheduled, date(2026, 7, 16, calendar: calendar))
+        XCTAssertEqual(rescheduled, date(2026, 7, 16, hour: 18, minute: 30, calendar: calendar))
         XCTAssertGreaterThanOrEqual(abs(blocker.scheduledAt.timeIntervalSince(rescheduled)), 48 * 3_600)
     }
 

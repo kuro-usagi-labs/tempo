@@ -479,13 +479,20 @@ public struct AdaptationPolicy: Sendable {
 
     public func safeRescheduleDate(for item: ProgramPlanItem, after date: Date, items: [ProgramPlanItem], calendar: Calendar = Calendar(identifier: .gregorian)) -> Date? {
         let day = calendar.startOfDay(for: date)
+        let scheduledTime = calendar.dateComponents([.hour, .minute], from: item.scheduledAt)
         for offset in 1...6 {
-            guard let candidate = calendar.date(byAdding: .day, value: offset, to: day) else { continue }
-            if item.effectiveKind != .guided { return candidate }
+            guard let candidateDay = calendar.date(byAdding: .day, value: offset, to: day) else { continue }
+            let candidateAtScheduledTime = calendar.date(
+                bySettingHour: scheduledTime.hour ?? 18,
+                minute: scheduledTime.minute ?? 0,
+                second: 0,
+                of: candidateDay
+            ) ?? candidateDay
+            if item.effectiveKind != .guided { return candidateAtScheduledTime }
             let isTooClose = items.contains { other in
-                other.id != item.id && other.effectiveKind == .guided && abs(other.scheduledAt.timeIntervalSince(candidate)) < 48 * 3_600
+                other.id != item.id && other.effectiveKind == .guided && abs(other.scheduledAt.timeIntervalSince(candidateAtScheduledTime)) < 48 * 3_600
             }
-            if !isTooClose { return candidate }
+            if !isTooClose { return candidateAtScheduledTime }
         }
         return nil
     }
