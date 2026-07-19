@@ -904,6 +904,7 @@ struct TempoBreathingSessionScreen: View {
         .padding(TempoDesign.Spacing.lg).frame(maxWidth: .infinity, maxHeight: .infinity).background(TempoDesign.Palette.canvas.ignoresSafeArea()).toolbar(.hidden, for: .navigationBar)
         .onReceive(ticker) { _ in if running && remaining > 0 { remaining -= 1; if remaining == 0 { finish() } } }
         .alert("Status rencana belum tersimpan", isPresented: $saveFailed) { Button("Coba lagi") { finish() } } message: { Text("Sesi selesai, tetapi catatan lokal perlu disimpan terlebih dahulu.") }
+        .accessibilityIdentifier("breathing.session")
     }
     private func finish() {
         running = false

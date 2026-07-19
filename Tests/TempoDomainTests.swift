@@ -2,6 +2,32 @@ import XCTest
 @testable import Tempo
 
 final class TempoDomainTests: XCTestCase {
+    func testImmediateRouterKeepsPrivateChoiceAtHighIntensity() {
+        let route = ImmediateActionRouter().route(ImmediateActionRequest(choice: .privateSession, intensity: 9))
+        XCTAssertEqual(route.destination, .privateSession)
+    }
+
+    func testImmediateRouterUsesAdvisoryWithoutBlockingPrivateChoice() {
+        let route = ImmediateActionRouter().route(ImmediateActionRequest(
+            choice: .privateSession,
+            intensity: 9,
+            anxiety: 9,
+            hoursSinceLastGuidedSession: 6
+        ))
+        XCTAssertEqual(route.destination, .privateSession)
+        XCTAssertTrue(route.advisories.contains(.highAnxiety))
+        XCTAssertTrue(route.advisories.contains(.recentGuidedSession))
+    }
+
+    func testImmediateRouterUsesExplicitDestinationsAndPhysicalSafetyOverride() {
+        let eligible = GuidedEligibility(isAllowed: true, reason: .ready, message: "Tersedia")
+        let blocked = GuidedEligibility(isAllowed: false, reason: .recoveryWindow, message: "Pulih dulu")
+        XCTAssertEqual(ImmediateActionRouter().route(ImmediateActionRequest(choice: .reset, intensity: 10)).destination, .reset)
+        XCTAssertEqual(ImmediateActionRouter().route(ImmediateActionRequest(choice: .guided, intensity: 8, guidedEligibility: eligible)).destination, .guided)
+        XCTAssertEqual(ImmediateActionRouter().route(ImmediateActionRequest(choice: .guided, intensity: 8, guidedEligibility: blocked)).destination, .guidedUnavailable)
+        XCTAssertEqual(ImmediateActionRouter().route(ImmediateActionRequest(choice: .privateSession, intensity: 5, hasPhysicalSymptoms: true)).destination, .healthCheck)
+    }
+
     func testSafetyAlwaysBlocksTraining() { var c = DecisionContext(); c.urgeIntensity = 9; c.intent = .training; c.urinaryBurning = true; let r = RuleEngine().evaluate(c); XCTAssertEqual(r.action, .healthCheck); XCTAssertTrue(r.blocksGuidedTraining) }
     func testRecentSessionRoutesToRecovery() { var c = DecisionContext(); c.programPhase = .awareness; c.hoursSinceLastSession = 6; c.intent = .training; XCTAssertEqual(RuleEngine().evaluate(c).action, .recovery) }
     func testGuidedSessionNeedsRecoveryBeforeResume() { var s = GuidedSessionMachine(); s.start(); s.beginActive(); XCTAssertTrue(s.rising(level: 7, threshold: 7)); XCTAssertEqual(s.state, .warning); XCTAssertTrue(s.advanceWarningToRecovery()); s.recovered(level: 5, elapsedSeconds: 30); XCTAssertEqual(s.state, .pausedRecovery); s.recovered(level: 4, elapsedSeconds: 30); XCTAssertEqual(s.state, .resumeReady) }
@@ -45,6 +71,15 @@ final class TempoDomainTests: XCTestCase {
         XCTAssertEqual(session.state, .pausedRecovery)
         XCTAssertTrue(session.lateStopOccurred)
         XCTAssertEqual(session.lastPauseReason, .almostTooLate)
+    }
+
+    func testEmergencyWarningIsVisibleBeforeRecovery() {
+        var session = GuidedSessionMachine()
+        session.start(); session.beginActive()
+        XCTAssertTrue(session.emergencyWarning())
+        XCTAssertEqual(session.state, .warning)
+        XCTAssertTrue(session.advanceWarningToRecovery())
+        XCTAssertEqual(session.state, .pausedRecovery)
     }
 
     func testEncryptedExportRoundTripAndWrongPassword() throws {

@@ -31,13 +31,21 @@ final class TempoUITests: XCTestCase {
 
     func testImmediatePrivateRouteUsesThreeDecisionFlow() {
         completeOnboarding()
-        tapButton("Aku mau onani sekarang")
-        XCTAssertTrue(identifiedElement("immediate.action").waitForExistence(timeout: 5))
-        tapButton("Sesi privat")
-        tapButton("Berikutnya")
-        tapButton("Berikutnya")
-        tapButton("Lanjutkan")
+        completeImmediateFlow(choice: "Sesi privat")
         XCTAssertTrue(identifiedElement("private.session.timer").waitForExistence(timeout: 5))
+    }
+
+    func testImmediateResetRouteOpensFiveMinuteReset() {
+        completeOnboarding()
+        completeImmediateFlow(choice: "Reset dulu")
+        XCTAssertTrue(identifiedElement("breathing.session").waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Reset lima menit"].exists)
+    }
+
+    func testImmediateGuidedRouteOpensGuidedCoach() {
+        completeOnboarding()
+        completeImmediateFlow(choice: "Sesi terpandu")
+        XCTAssertTrue(identifiedElement("guided.session").waitForExistence(timeout: 5))
     }
 
     private func completeOnboarding() {
@@ -54,6 +62,15 @@ final class TempoUITests: XCTestCase {
         XCTAssertTrue(finishButton.isEnabled)
         finishButton.tap()
         XCTAssertTrue(app.tabBars.buttons["Hari Ini"].waitForExistence(timeout: 5))
+    }
+
+    private func completeImmediateFlow(choice: String) {
+        tapButton("Aku mau onani sekarang")
+        XCTAssertTrue(identifiedElement("immediate.action").waitForExistence(timeout: 5))
+        tapButton(choice)
+        tapButton("Berikutnya")
+        tapButton("Berikutnya")
+        tapButton("Lanjutkan")
     }
 
     private var nextButton: XCUIElement { app.buttons["onboarding.next"] }
