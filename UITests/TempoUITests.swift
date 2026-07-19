@@ -78,9 +78,9 @@ final class TempoUITests: XCTestCase {
         tapIdentified("today.readiness.save")
 
         XCTAssertTrue(identifiedElement("health.check").waitForExistence(timeout: 5))
-        tapIdentified("health.check.confirmed")
-        tapIdentified("health.check.medicalFollowUp")
-        tapIdentified("health.check.submit")
+        setSwitch("health.check.confirmed", isOn: true)
+        setSwitch("health.check.medicalFollowUp", isOn: true)
+        tapIdentifiedButton("health.check.submit")
 
         XCTAssertTrue(app.tabBars.buttons["Hari Ini"].waitForExistence(timeout: 5))
         app.tabBars.buttons["Hari Ini"].tap()
@@ -94,11 +94,15 @@ final class TempoUITests: XCTestCase {
         app.tabBars.buttons["Profil"].tap()
 
         tapIdentified("profile.activityPreference.open")
-        XCTAssertTrue(identifiedElement("profile.activityPreference.sheet").waitForExistence(timeout: 5))
+        let preferenceSheet = identifiedElement("profile.activityPreference.sheet")
+        XCTAssertTrue(preferenceSheet.waitForExistence(timeout: 5))
         tapIdentified("profile.activityPreference.breathingAndMobility")
         XCTAssertTrue(identifiedElement("profile.activityPreference.validation").waitForExistence(timeout: 5))
-        tapIdentified("profile.activityPreference.done")
-        XCTAssertTrue(identifiedElement("profile.activityPreference.value").waitForExistence(timeout: 5))
+        tapNavigationBarButton("Selesai")
+        XCTAssertTrue(preferenceSheet.waitForNonExistence(timeout: 5))
+        let value = identifiedElement("profile.activityPreference.value")
+        XCTAssertTrue(value.waitForExistence(timeout: 5))
+        XCTAssertEqual(value.label, "Latihan napas dan mobilitas")
     }
 
     func testManualPostponeOpensTheLinkedReplacement() {
@@ -215,6 +219,62 @@ final class TempoUITests: XCTestCase {
         XCTAssertTrue(element.isHittable)
         XCTAssertTrue(element.isEnabled)
         element.tap()
+    }
+
+    /// Uses the concrete accessibility role for controls whose generic SwiftUI
+    /// descendants can otherwise resolve to a non-hittable label or container.
+    private func tapIdentifiedButton(_ identifier: String, scrollIntoView: Bool = true) {
+        let button = app.buttons[identifier]
+        if scrollIntoView {
+            for _ in 0..<3 {
+                if button.waitForExistence(timeout: 1), button.isHittable { break }
+                app.swipeUp()
+            }
+        }
+        XCTAssertTrue(button.waitForExistence(timeout: 5))
+        let enabled = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == 1"),
+            object: button
+        )
+        XCTAssertEqual(XCTWaiter().wait(for: [enabled], timeout: 5), .completed)
+        XCTAssertTrue(button.isHittable)
+        button.tap()
+    }
+
+    /// A safety confirmation is meaningful only after the control state has
+    /// actually propagated through SwiftUI. Querying the concrete switch role
+    /// avoids tapping a label-like descendant and makes that assertion explicit.
+    private func setSwitch(_ identifier: String, isOn: Bool) {
+        let control = app.switches[identifier]
+        for _ in 0..<3 {
+            if control.waitForExistence(timeout: 1), control.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(control.waitForExistence(timeout: 5))
+        XCTAssertTrue(control.isHittable)
+        if switchIsOn(control) != isOn {
+            control.tap()
+        }
+        let desiredState = isOn ? "value == 1 OR value == '1'" : "value == 0 OR value == '0'"
+        let stateChanged = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: desiredState),
+            object: control
+        )
+        XCTAssertEqual(XCTWaiter().wait(for: [stateChanged], timeout: 5), .completed)
+    }
+
+    private func tapNavigationBarButton(_ label: String) {
+        let button = app.navigationBars.buttons[label]
+        XCTAssertTrue(button.waitForExistence(timeout: 5))
+        XCTAssertTrue(button.isEnabled)
+        XCTAssertTrue(button.isHittable)
+        button.tap()
+    }
+
+    private func switchIsOn(_ control: XCUIElement) -> Bool {
+        if let value = control.value as? String { return value == "1" }
+        if let value = control.value as? NSNumber { return value.boolValue }
+        return false
     }
 
     private func identifiedElement(_ identifier: String) -> XCUIElement {

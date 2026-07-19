@@ -317,6 +317,7 @@ struct TempoActivityPreferenceSheet: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Selesai") { dismiss() }
+                        .accessibilityLabel("Selesai")
                         .accessibilityIdentifier("profile.activityPreference.done")
                 }
             }
