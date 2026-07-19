@@ -563,7 +563,7 @@ final class LocalHistory {
     }
     var programContext: ProgramContext {
         let readiness = currentOrRecentReadiness
-        ProgramContext(
+        return ProgramContext(
             phase: effectiveProgramPhase,
             baselineCompleted: baseline != nil,
             anxiety: Int((currentAnxiety ?? Double(baseline?.anxiety ?? 5)).rounded()),
