@@ -3,6 +3,53 @@ import XCTest
 @testable import TempoDomain
 
 final class TempoDomainTests: XCTestCase {
+    func testImmediatePrivateHighIntensityRoutesToPrivateSession() {
+        let result = ImmediateActionRouter().route(ImmediateActionRequest(choice: .privateSession, intensity: 9))
+        XCTAssertEqual(result.destination, .privateSession)
+    }
+
+    func testImmediatePrivateHighAnxietyAddsAdvisoryWithoutChangingDestination() {
+        let result = ImmediateActionRouter().route(ImmediateActionRequest(choice: .privateSession, intensity: 6, anxiety: 9))
+        XCTAssertEqual(result.destination, .privateSession)
+        XCTAssertTrue(result.advisories.contains(.highAnxiety))
+    }
+
+    func testImmediatePrivateRecentGuidedAddsAdvisoryWithoutChangingDestination() {
+        let result = ImmediateActionRouter().route(ImmediateActionRequest(
+            choice: .privateSession,
+            intensity: 6,
+            hoursSinceLastGuidedSession: 8,
+            guidedSessionsLast7Days: 3
+        ))
+        XCTAssertEqual(result.destination, .privateSession)
+        XCTAssertTrue(result.advisories.contains(.recentGuidedSession))
+        XCTAssertTrue(result.advisories.contains(.frequentGuidedSessions))
+    }
+
+    func testImmediateResetAlwaysRoutesToFiveMinuteReset() {
+        let result = ImmediateActionRouter().route(ImmediateActionRequest(choice: .reset, intensity: 10, anxiety: 10))
+        XCTAssertEqual(result.destination, .reset)
+    }
+
+    func testImmediateGuidedEligibleRoutesToGuided() {
+        let result = ImmediateActionRouter().route(ImmediateActionRequest(choice: .guided, intensity: 8))
+        XCTAssertEqual(result.destination, .guided)
+    }
+
+    func testImmediateGuidedUnavailableRoutesToExplanation() {
+        let eligibility = GuidedEligibility(isAllowed: false, reason: .recoveryWindow, message: "Tunggu sampai besok.")
+        let result = ImmediateActionRouter().route(ImmediateActionRequest(choice: .guided, intensity: 8, guidedEligibility: eligibility))
+        XCTAssertEqual(result.destination, .guidedUnavailable)
+        XCTAssertEqual(result.guidedEligibility, eligibility)
+    }
+
+    func testImmediatePhysicalSymptomsOverrideEveryChoice() {
+        for choice in ImmediateActionChoice.allCases {
+            let result = ImmediateActionRouter().route(ImmediateActionRequest(choice: choice, intensity: 9, hasPhysicalSymptoms: true))
+            XCTAssertEqual(result.destination, .healthCheck)
+        }
+    }
+
     func testUrgentSymptomsBlockGuidedTraining() {
         var context = DecisionContext()
         context.intent = .training
@@ -256,6 +303,103 @@ final class TempoDomainTests: XCTestCase {
         let held = WeeklyPlanGenerator().generate(weekStarting: monday, weeks: 1, context: context, calendar: calendar)
         XCTAssertTrue(held.allSatisfy { $0.phase == .safetyHold && $0.effectiveKind == .recovery })
         XCTAssertTrue(held.allSatisfy { $0.reasons.contains(.safetyHold) })
+    }
+
+    func testPrivateSessionOnMondayDoesNotRemoveThursdayGuidedSession() {
+        let calendar = utcCalendar
+        let monday = date(2026, 7, 13, hour: 0, calendar: calendar)
+        let privateSession = date(2026, 7, 13, hour: 12, calendar: calendar)
+        let plan = WeeklyPlanGenerator().generate(
+            weekStarting: monday,
+            weeks: 1,
+            context: ProgramContext(phase: .awareness, baselineCompleted: true),
+            scheduleHistory: ProgramScheduleHistory(privateSessionDates: [privateSession]),
+            referenceDate: privateSession,
+            calendar: calendar
+        )
+
+        let thursday = plan.first { calendar.component(.weekday, from: $0.scheduledAt) == 5 }
+        XCTAssertEqual(thursday?.effectiveKind, .guided)
+        XCTAssertEqual(thursday?.status, .scheduled)
+    }
+
+    func testPrivateSessionWithinTwentyFourHoursReplacesGuidedWithRecovery() {
+        let calendar = utcCalendar
+        let monday = date(2026, 7, 13, calendar: calendar)
+        let wednesdayNight = date(2026, 7, 15, hour: 22, calendar: calendar)
+        let plan = WeeklyPlanGenerator().generate(
+            weekStarting: monday,
+            weeks: 1,
+            context: ProgramContext(phase: .awareness, baselineCompleted: true),
+            scheduleHistory: ProgramScheduleHistory(privateSessionDates: [wednesdayNight]),
+            referenceDate: wednesdayNight,
+            calendar: calendar
+        )
+
+        let thursday = plan.first { calendar.component(.weekday, from: $0.scheduledAt) == 5 }
+        XCTAssertEqual(thursday?.prescribedKind, .guided)
+        XCTAssertEqual(thursday?.effectiveKind, .recovery)
+        XCTAssertTrue(thursday?.adaptation?.reasons.contains(.privateRecoveryWindow) == true)
+    }
+
+    func testHighAnxietyTodayDoesNotRemoveGuidedSeveralDaysLater() {
+        let calendar = utcCalendar
+        let monday = date(2026, 7, 13, hour: 9, calendar: calendar)
+        let plan = WeeklyPlanGenerator().generate(
+            weekStarting: monday,
+            weeks: 1,
+            context: ProgramContext(phase: .awareness, baselineCompleted: true, anxiety: 9),
+            referenceDate: monday,
+            calendar: calendar
+        )
+
+        let thursday = plan.first { calendar.component(.weekday, from: $0.scheduledAt) == 5 }
+        XCTAssertEqual(thursday?.effectiveKind, .guided)
+    }
+
+    func testGeneratedGuidedSessionsKeepSafeSpacingAroundExistingReschedule() {
+        let calendar = utcCalendar
+        let monday = date(2026, 7, 13, calendar: calendar)
+        let rescheduledTuesday = date(2026, 7, 14, hour: 18, minute: 30, calendar: calendar)
+        let plan = WeeklyPlanGenerator().generate(
+            weekStarting: monday,
+            weeks: 1,
+            context: ProgramContext(phase: .awareness, baselineCompleted: true),
+            scheduleHistory: ProgramScheduleHistory(scheduledGuidedDates: [rescheduledTuesday]),
+            referenceDate: monday,
+            calendar: calendar
+        )
+        let guidedDates = ([rescheduledTuesday] + plan.filter { $0.effectiveKind == .guided }.map(\.scheduledAt)).sorted()
+
+        for pair in zip(guidedDates, guidedDates.dropFirst()) {
+            XCTAssertGreaterThanOrEqual(pair.1.timeIntervalSince(pair.0), 48 * 3_600)
+        }
+    }
+
+    func testForcedRefreshRetainsUnavailableAndRescheduledDecisions() {
+        let scheduled = date(2026, 7, 20, hour: 18, calendar: utcCalendar)
+        let original = planItem(scheduledAt: scheduled, kind: .guided)
+        let unavailable = original.adapted(to: .recovery, reasons: [.unavailable], at: scheduled)
+        let rescheduled = original.adapted(to: .guided, reasons: [.postponed, .safeReschedule], at: scheduled, rescheduledFromID: original.id)
+        let policy = PlanRefreshPolicy()
+
+        XCTAssertTrue(policy.shouldRetainExisting(unavailable, now: scheduled.addingTimeInterval(-3_600), force: true))
+        XCTAssertTrue(policy.shouldRetainExisting(rescheduled, now: scheduled.addingTimeInterval(-3_600), force: true))
+    }
+
+    func testBaselineAnswersChangePrescriptionAndExerciseSelection() {
+        let normal = SessionPrescriptionEngine().prescription(for: ProgramContext(phase: .awareness, baselineCompleted: true))
+        let adapted = SessionPrescriptionEngine().prescription(for: ProgramContext(
+            phase: .awareness,
+            baselineCompleted: true,
+            rushedHabit: true,
+            perceivedControl: 2
+        ))
+        XCTAssertGreaterThan(adapted.preparationSeconds, normal.preparationSeconds)
+        XCTAssertLessThan(adapted.pauseThreshold, normal.pauseThreshold)
+
+        let noSpace = ProgramContext(phase: .awareness, baselineCompleted: true, hasSafeActivitySpace: false)
+        XCTAssertEqual(PlanActivityResolver().resolve(.strength, context: noSpace).kind, .cardio)
     }
 
     func testEligibilityEngineBlocksGuidedSessionDuringPrivateRecovery() {

@@ -17,6 +17,11 @@ public struct DecisionContext: Equatable, Sendable {
     public var hoursSinceLastSession: Double? = nil
     public var guidedSessionsLast7Days = 0
     public init() {}
+
+    public var hasPhysicalSymptoms: Bool {
+        pain || irritation || urinaryBurning || unusualDischarge ||
+            bloodReported || pelvicOrTesticularPain || fever
+    }
 }
 
 public struct Recommendation: Equatable, Sendable {
@@ -27,6 +32,114 @@ public struct Recommendation: Equatable, Sendable {
     public let blocksGuidedTraining: Bool
     public init(_ action: RecommendedAction, _ severity: RecommendationSeverity = .normal, _ reasonCode: String, _ message: String, blocked: Bool = false) {
         self.action = action; self.severity = severity; self.reasonCode = reasonCode; self.message = message; self.blocksGuidedTraining = blocked
+    }
+}
+
+public enum ImmediateActionChoice: String, Codable, CaseIterable, Sendable, Hashable {
+    case reset
+    case privateSession
+    case guided
+}
+
+public enum ImmediateActionDestination: String, Codable, Sendable, Hashable {
+    case reset
+    case privateSession
+    case guided
+    case guidedUnavailable
+    case healthCheck
+}
+
+public enum ImmediateActionAdvisory: String, Codable, Sendable, Hashable {
+    case highAnxiety
+    case lowSleep
+    case recentGuidedSession
+    case recentPrivateSession
+    case frequentGuidedSessions
+
+    public var message: String {
+        switch self {
+        case .highAnxiety: "Kecemasan sedang tinggi. Pertahankan tempo ringan dan berhenti kapan pun dibutuhkan."
+        case .lowSleep: "Tidurmu sedang kurang. Pilih sesi yang singkat dan beri tubuh ruang pulih."
+        case .recentGuidedSession: "Kamu baru menjalani sesi terpandu. Sesi privat tetap tersedia, tetapi jangan mengejar latihan tambahan."
+        case .recentPrivateSession: "Tubuh mungkin masih dalam masa pemulihan dari sesi privat sebelumnya."
+        case .frequentGuidedSessions: "Porsi latihan terpandu minggu ini sudah cukup. Sesi privat tidak dihitung sebagai latihan terpandu."
+        }
+    }
+}
+
+public struct ImmediateActionRequest: Equatable, Sendable {
+    public var choice: ImmediateActionChoice
+    public var intensity: Int
+    public var anxiety: Int
+    public var sleepHours: Double?
+    public var hoursSinceLastGuidedSession: Double?
+    public var hoursSinceLastPrivateSession: Double?
+    public var guidedSessionsLast7Days: Int
+    public var guidedEligibility: GuidedEligibility
+    public var hasPhysicalSymptoms: Bool
+
+    public init(
+        choice: ImmediateActionChoice,
+        intensity: Int,
+        anxiety: Int = 5,
+        sleepHours: Double? = nil,
+        hoursSinceLastGuidedSession: Double? = nil,
+        hoursSinceLastPrivateSession: Double? = nil,
+        guidedSessionsLast7Days: Int = 0,
+        guidedEligibility: GuidedEligibility = GuidedEligibility(isAllowed: true, reason: .ready, message: "Guided session tersedia."),
+        hasPhysicalSymptoms: Bool = false
+    ) {
+        self.choice = choice
+        self.intensity = min(10, max(1, intensity))
+        self.anxiety = min(10, max(1, anxiety))
+        self.sleepHours = sleepHours
+        self.hoursSinceLastGuidedSession = hoursSinceLastGuidedSession
+        self.hoursSinceLastPrivateSession = hoursSinceLastPrivateSession
+        self.guidedSessionsLast7Days = max(0, guidedSessionsLast7Days)
+        self.guidedEligibility = guidedEligibility
+        self.hasPhysicalSymptoms = hasPhysicalSymptoms
+    }
+}
+
+public struct ImmediateActionRoute: Equatable, Sendable {
+    public let destination: ImmediateActionDestination
+    public let advisories: [ImmediateActionAdvisory]
+    public let guidedEligibility: GuidedEligibility?
+
+    public init(destination: ImmediateActionDestination, advisories: [ImmediateActionAdvisory] = [], guidedEligibility: GuidedEligibility? = nil) {
+        self.destination = destination
+        self.advisories = advisories
+        self.guidedEligibility = guidedEligibility
+    }
+}
+
+public struct ImmediateActionRouter: Sendable {
+    public init() {}
+
+    public func route(_ request: ImmediateActionRequest) -> ImmediateActionRoute {
+        if request.hasPhysicalSymptoms {
+            return ImmediateActionRoute(destination: .healthCheck)
+        }
+        switch request.choice {
+        case .reset:
+            return ImmediateActionRoute(destination: .reset)
+        case .guided:
+            if request.guidedEligibility.isAllowed {
+                return ImmediateActionRoute(destination: .guided)
+            }
+            return ImmediateActionRoute(
+                destination: .guidedUnavailable,
+                guidedEligibility: request.guidedEligibility
+            )
+        case .privateSession:
+            var advisories: [ImmediateActionAdvisory] = []
+            if request.anxiety >= 8 { advisories.append(.highAnxiety) }
+            if let sleep = request.sleepHours, sleep < 5.5 { advisories.append(.lowSleep) }
+            if let hours = request.hoursSinceLastGuidedSession, hours <= 24 { advisories.append(.recentGuidedSession) }
+            if let hours = request.hoursSinceLastPrivateSession, hours < 24 { advisories.append(.recentPrivateSession) }
+            if request.guidedSessionsLast7Days >= 3 { advisories.append(.frequentGuidedSessions) }
+            return ImmediateActionRoute(destination: .privateSession, advisories: advisories)
+        }
     }
 }
 
@@ -82,6 +195,9 @@ public struct RuleEngine: Sendable {
         if c.programPhase == .assessmentRequired, c.intent == .training {
             return Recommendation(.education, .caution, "readiness.baseline_required", "Lengkapi baseline sebelum memulai guided session.", blocked: true)
         }
+        if c.intent == .privateSession {
+            return Recommendation(.privateSession, c.anxiety >= 8 ? .caution : .normal, "urge.private_choice", "Jalani sesi pribadi tanpa terburu-buru dan berhenti jika terasa sakit.")
+        }
         if (c.hoursSinceLastSession ?? .infinity) <= 24 || c.guidedSessionsLast7Days >= 3 {
             return Recommendation(.recovery, .caution, "readiness.recent_session", "Istirahat adalah bagian program. Sesi tambahan sekarang tidak disarankan.", blocked: true)
         }
@@ -90,7 +206,6 @@ public struct RuleEngine: Sendable {
         if c.trigger == .boredom || c.trigger == .stress || c.urgeIntensity <= 4 {
             return Recommendation(.urgeSurf, .normal, "urge.regulation", "Coba reset lima menit sebelum menentukan apa yang kamu butuhkan.")
         }
-        if c.intent == .privateSession { return Recommendation(.privateSession, .normal, "urge.private_choice", "Jalani sesi pribadi tanpa terburu-buru dan berhenti jika terasa sakit.") }
         if c.urgeIntensity >= 5 && c.intent == .training { return Recommendation(.guidedSession, .normal, "urge.training_ready", "Waktu pemulihanmu cukup untuk guided control session.") }
         return Recommendation(.education, .normal, "plan.review", "Materi singkat atau aktivitas pemulihan adalah langkah aman berikutnya.")
     }
@@ -143,6 +258,13 @@ public struct GuidedSessionMachine: Equatable, Sendable {
         state = .pausedRecovery
         return true
     }
+    @discardableResult public mutating func emergencyWarning() -> Bool {
+        guard [.activeLow, .activeRising].contains(state) else { return false }
+        lastPauseReason = .almostTooLate
+        lateStopOccurred = true
+        state = .warning
+        return true
+    }
     public mutating func recovered(level: Int, elapsedSeconds: Int, minimumSeconds: Int = 30) {
         guard state == .pausedRecovery, elapsedSeconds >= minimumSeconds, level <= 4 else { return }
         if lastPauseReason == .interruption { state = .resumeReady; return }
@@ -174,6 +296,9 @@ public struct PlanActivityResolver: Sendable {
     public func resolve(_ kind: ActivityKind, context: ProgramContext) -> (kind: ActivityKind, reasons: [PlanReason]) {
         if context.hasSafetyHold { return (.recovery, [.safetyHold]) }
         if context.exerciseRestricted && (kind == .cardio || kind == .strength) { return (.recovery, [.exerciseRestriction]) }
+        if kind == .strength, !context.hasSafeActivitySpace {
+            return context.canWalkTwentyMinutes ? (.cardio, [.unsafeActivitySpace]) : (.recovery, [.unsafeActivitySpace])
+        }
         if kind == .guided {
             let eligibility = EligibilityEngine().guidedEligibility(for: context)
             if !eligibility.isAllowed {

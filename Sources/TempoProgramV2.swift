@@ -34,6 +34,10 @@ public enum PlanReason: String, Codable, CaseIterable, Hashable, Sendable {
     case missedActivity
     case safeReschedule
     case legacyImported
+    case highStimulusReset
+    case movementLoad
+    case unsafeActivitySpace
+    case preferredActivity
 
     public var shortExplanation: String {
         switch self {
@@ -56,6 +60,10 @@ public enum PlanReason: String, Codable, CaseIterable, Hashable, Sendable {
         case .missedActivity: "Aktivitas yang terlewat tidak perlu dikejar sekaligus."
         case .safeReschedule: "Penjadwalan ulang tetap menjaga jarak pemulihan."
         case .legacyImported: "Riwayat ini dipertahankan dari versi aplikasi sebelumnya."
+        case .highStimulusReset: "Materi awal membantu mengurangi ketergantungan pada stimulus yang sangat tinggi."
+        case .movementLoad: "Porsi gerak sudah cukup sehingga program tidak menambah cardio berlebihan."
+        case .unsafeActivitySpace: "Aktivitas diganti karena ruang latihan yang aman belum tersedia."
+        case .preferredActivity: "Aktivitas dipilih mengikuti preferensimu selama tetap aman."
         }
     }
 }
@@ -181,6 +189,11 @@ public struct ProgramContext: Equatable, Sendable {
     public var hoursSinceLastPrivateSession: Double?
     public var guidedSessionsLast7Days: Int
     public var lateStopsLast3Sessions: Int
+    public var perceivedControl: Int?
+    public var weeklyMovementMinutes: Int?
+    public var activityLevel: String?
+    public var preferredActivity: String?
+    public var programWeek: Int
 
     public init(
         phase: ProgramPhase = .assessmentRequired,
@@ -196,7 +209,12 @@ public struct ProgramContext: Equatable, Sendable {
         hoursSinceLastGuidedSession: Double? = nil,
         hoursSinceLastPrivateSession: Double? = nil,
         guidedSessionsLast7Days: Int = 0,
-        lateStopsLast3Sessions: Int = 0
+        lateStopsLast3Sessions: Int = 0,
+        perceivedControl: Int? = nil,
+        weeklyMovementMinutes: Int? = nil,
+        activityLevel: String? = nil,
+        preferredActivity: String? = nil,
+        programWeek: Int = 1
     ) {
         self.phase = phase
         self.baselineCompleted = baselineCompleted
@@ -212,6 +230,11 @@ public struct ProgramContext: Equatable, Sendable {
         self.hoursSinceLastPrivateSession = hoursSinceLastPrivateSession
         self.guidedSessionsLast7Days = max(0, guidedSessionsLast7Days)
         self.lateStopsLast3Sessions = max(0, lateStopsLast3Sessions)
+        self.perceivedControl = perceivedControl.map { min(10, max(1, $0)) }
+        self.weeklyMovementMinutes = weeklyMovementMinutes.map { max(0, $0) }
+        self.activityLevel = activityLevel
+        self.preferredActivity = preferredActivity
+        self.programWeek = max(1, programWeek)
     }
 }
 
@@ -299,18 +322,19 @@ public struct SessionPrescriptionEngine: Sendable {
         }
         let lighterDay = context.anxiety >= 8 || (context.sleepHours ?? 8) < 5.5
         let lateStops = context.lateStopsLast3Sessions >= 2
+        let lowControl = (context.perceivedControl ?? 10) <= 3
         var reasons: [PlanReason] = []
         if context.anxiety >= 8 { reasons.append(.highAnxiety) }
         if (context.sleepHours ?? 8) < 5.5 { reasons.append(.lowSleep) }
         if lateStops { reasons.append(.lateStopAdaptation) }
         return SessionPrescription(
-            preparationSeconds: lighterDay ? 120 : 90,
+            preparationSeconds: context.rushedHabit ? 60 : (lighterDay ? 60 : 45),
             activeTargetSeconds: lighterDay ? 360 : 600,
             recoverySeconds: lateStops ? 60 : 40,
             maximumCycles: lighterDay ? min(2, phaseCycles) : phaseCycles,
-            pauseThreshold: lateStops ? 6 : 7,
+            pauseThreshold: lateStops || lowControl ? 6 : 7,
             maximumDurationSeconds: lighterDay ? 900 : 1_200,
-            checkInIntervalSeconds: 45,
+            checkInIntervalSeconds: context.rushedHabit ? 35 : 45,
             reasons: reasons
         )
     }
@@ -346,26 +370,74 @@ public struct ExercisePrescriptionEngine: Sendable {
 public struct WeeklyPlanGenerator: Sendable {
     public init() {}
 
-    public func generate(weekStarting monday: Date, weeks: Int = 2, context: ProgramContext, calendar: Calendar = Calendar(identifier: .gregorian)) -> [ProgramPlanItem] {
+    public func generate(
+        weekStarting monday: Date,
+        weeks: Int = 2,
+        context: ProgramContext,
+        scheduleHistory: ProgramScheduleHistory = ProgramScheduleHistory(),
+        referenceDate: Date = .now,
+        calendar: Calendar = Calendar(identifier: .gregorian)
+    ) -> [ProgramPlanItem] {
         let start = Self.startOfMonday(for: monday, calendar: calendar)
         let count = min(4, max(1, weeks))
-        return (0..<(count * 7)).compactMap { offset in
-            guard let date = calendar.date(byAdding: .day, value: offset, to: start) else { return nil }
+        var generated: [ProgramPlanItem] = []
+        for offset in 0..<(count * 7) {
+            guard let date = calendar.date(byAdding: .day, value: offset, to: start) else { continue }
             let template = template(for: context.phase)[offset % 7]
-            let resolved = PlanActivityResolver().resolve(template.kind, context: context)
             let time = calendar.date(bySettingHour: template.hour, minute: template.minute, second: 0, of: date) ?? date
-            return ProgramPlanItem(
+            var requestedKind = template.kind
+            var adaptationReasons: [PlanReason] = []
+            let highMovement = (context.weeklyMovementMinutes ?? (context.activityLevel?.localizedCaseInsensitiveContains("aktif") == true ? 150 : 0)) >= 150
+            if context.highStimulusPattern, context.programWeek <= 1, offset % 7 == 2 {
+                requestedKind = .education
+                adaptationReasons.append(.highStimulusReset)
+            } else if template.kind == .cardio, offset % 7 == 5,
+                      highMovement || context.preferredActivity?.localizedCaseInsensitiveContains("napas") == true {
+                requestedKind = .breathing
+                adaptationReasons.append(highMovement ? .movementLoad : .preferredActivity)
+            }
+
+            var datedContext = context
+            if !calendar.isDate(time, inSameDayAs: referenceDate) {
+                datedContext.anxiety = min(7, context.anxiety)
+                datedContext.sleepHours = nil
+            }
+            let generatedGuidedDates = generated.filter { $0.effectiveKind == .guided && $0.status.isActionable }.map(\.scheduledAt)
+            let guidedDates = scheduleHistory.guidedSessionDates + scheduleHistory.scheduledGuidedDates + generatedGuidedDates
+            datedContext.hoursSinceLastGuidedSession = projectedHours(since: guidedDates, at: time)
+            datedContext.hoursSinceLastPrivateSession = projectedHours(since: scheduleHistory.privateSessionDates, at: time)
+            let sevenDaysEarlier = time.addingTimeInterval(-7 * 86_400)
+            datedContext.guidedSessionsLast7Days = guidedDates.filter { $0 >= sevenDaysEarlier && $0 < time }.count
+
+            var resolved = PlanActivityResolver().resolve(requestedKind, context: datedContext)
+            adaptationReasons.append(contentsOf: resolved.reasons)
+            if resolved.kind == .guided,
+               guidedDates.contains(where: { abs($0.timeIntervalSince(time)) < 48 * 3_600 }) {
+                resolved = (.recovery, [.guidedSpacing])
+                adaptationReasons.append(.guidedSpacing)
+            }
+            let finalKind = resolved.kind
+            let isAdapted = finalKind != template.kind
+            let status: ProgramPlanStatus = isAdapted ? (finalKind == .recovery ? .recovery : .adapted) : .scheduled
+            let item = ProgramPlanItem(
                 id: stableID(for: time, kind: template.kind, phase: context.hasSafetyHold ? .safetyHold : context.phase),
                 scheduledAt: time,
                 prescribedKind: template.kind,
-                estimatedMinutes: resolved.kind == .recovery && template.kind != .recovery ? min(8, template.minutes) : template.minutes,
+                estimatedMinutes: finalKind == .recovery && template.kind != .recovery ? min(8, template.minutes) : template.minutes,
                 phase: context.hasSafetyHold ? .safetyHold : context.phase,
-                reasons: template.reasons + resolved.reasons,
+                reasons: template.reasons + adaptationReasons,
                 rulesetVersion: .current,
-                status: resolved.kind == .recovery && template.kind != .recovery ? .recovery : .scheduled,
-                adaptation: resolved.kind == template.kind ? nil : PlanAdaptation(adaptedAt: date, originalKind: template.kind, replacementKind: resolved.kind, reasons: resolved.reasons)
+                status: status,
+                adaptation: isAdapted ? PlanAdaptation(adaptedAt: referenceDate, originalKind: template.kind, replacementKind: finalKind, reasons: adaptationReasons) : nil
             )
+            generated.append(item)
         }
+        return generated
+    }
+
+    private func projectedHours(since events: [Date], at scheduledDate: Date) -> Double? {
+        guard let latest = events.filter({ $0 < scheduledDate }).max() else { return nil }
+        return max(0, scheduledDate.timeIntervalSince(latest) / 3_600)
     }
 
     /// Stable IDs make a generated plan reproducible and give notification
@@ -422,6 +494,32 @@ public struct WeeklyPlanGenerator: Sendable {
         let weekday = calendar.component(.weekday, from: day)
         let daysFromMonday = (weekday + 5) % 7
         return calendar.date(byAdding: .day, value: -daysFromMonday, to: day) ?? day
+    }
+}
+
+public struct ProgramScheduleHistory: Equatable, Sendable {
+    public var guidedSessionDates: [Date]
+    public var privateSessionDates: [Date]
+    public var scheduledGuidedDates: [Date]
+
+    public init(guidedSessionDates: [Date] = [], privateSessionDates: [Date] = [], scheduledGuidedDates: [Date] = []) {
+        self.guidedSessionDates = guidedSessionDates
+        self.privateSessionDates = privateSessionDates
+        self.scheduledGuidedDates = scheduledGuidedDates
+    }
+}
+
+public struct PlanRefreshPolicy: Sendable {
+    public init() {}
+
+    public func shouldRetainExisting(_ item: ProgramPlanItem, now: Date, force: Bool) -> Bool {
+        if item.status.isTerminal { return true }
+        if item.adaptation?.rescheduledFromID != nil { return true }
+        let userReasons: Set<PlanReason> = [.unavailable, .postponed, .safeReschedule]
+        if let reasons = item.adaptation?.reasons, !userReasons.isDisjoint(with: reasons) { return true }
+        if item.scheduledAt <= now { return true }
+        if !force, item.status == .adapted || item.status == .recovery { return true }
+        return false
     }
 }
 
