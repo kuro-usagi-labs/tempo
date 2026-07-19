@@ -52,6 +52,17 @@ final class TempoUITests: XCTestCase {
         let nextWeek = badge.value as? String
         XCTAssertNotEqual(nextWeek, currentWeek)
 
+        let previous = identifiedElement("program.week.previous")
+        XCTAssertTrue(previous.exists)
+        XCTAssertTrue(previous.isEnabled)
+        previous.tap()
+        let restoredWeek = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", currentWeek ?? ""),
+            object: badge
+        )
+        wait(for: [restoredWeek], timeout: 5)
+        XCTAssertEqual(badge.value as? String, currentWeek)
+
         let today = identifiedElement("program.week.today")
         XCTAssertTrue(today.waitForExistence(timeout: 5))
         today.tap()
