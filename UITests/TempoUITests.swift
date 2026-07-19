@@ -33,7 +33,7 @@ final class TempoUITests: XCTestCase {
         completeOnboarding()
         tapButton("Aku mau onani sekarang")
         XCTAssertTrue(identifiedElement("immediate.action").waitForExistence(timeout: 5))
-        tapButton("Sesi privat")
+        tapButton("immediate.choice.privateSession")
         tapButton("Berikutnya")
         tapButton("Berikutnya")
         tapButton("Lanjutkan")

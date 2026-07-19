@@ -91,6 +91,9 @@ struct TempoImmediateActionScreen: View {
                     .background(choice == option ? TempoDesign.Palette.accent.opacity(0.16) : TempoDesign.Palette.surface, in: RoundedRectangle(cornerRadius: TempoDesign.Radius.medium, style: .continuous))
                 }
                 .buttonStyle(TempoTactileButtonStyle())
+                .accessibilityLabel(option.title)
+                .accessibilityHint(option.subtitle)
+                .accessibilityIdentifier("immediate.choice.\(option.rawValue)")
             }
         }
     }
