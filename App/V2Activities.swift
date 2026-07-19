@@ -1,6 +1,11 @@
 import SwiftUI
 import Combine
 
+private func tempoActivityDuration(_ seconds: Int) -> String {
+    let safe = max(0, seconds)
+    return "\(safe / 60):\(String(format: "%02d", safe % 60))"
+}
+
 struct TempoCardioSessionScreen: View {
     let plannedDayID: UUID?
     @Environment(LocalHistory.self) private var history
@@ -28,7 +33,7 @@ struct TempoCardioSessionScreen: View {
             Spacer()
             Image(systemName: "figure.walk").font(.system(size: 54, weight: .semibold)).foregroundStyle(TempoDesign.Palette.accentSoft)
             Text(title).font(TempoDesign.Typography.pageTitle)
-            Text(tempoDuration(remaining)).font(.system(size: 62, weight: .bold, design: .rounded)).monospacedDigit()
+            Text(tempoActivityDuration(remaining)).font(.system(size: 62, weight: .bold, design: .rounded)).monospacedDigit()
             Text(instruction).multilineTextAlignment(.center).foregroundStyle(TempoDesign.Palette.textSecondary).padding(.horizontal, TempoDesign.Spacing.lg)
             sessionContent
             Spacer()
@@ -144,7 +149,7 @@ struct TempoStrengthCircuitScreen: View {
         switch phase {
         case .ready: "Dua set ringan dengan teknik nyaman. Berhenti bila muncul nyeri tajam, pusing, nyeri dada, atau sesak tidak biasa."
         case .working: "Set \(setInMovement) dari \(prescription.sets) · \(prescription.repetitions) repetisi nyaman"
-        case .rest: "Istirahat \(tempoDuration(restRemaining)). Napas tenang, tidak perlu terburu-buru."
+        case .rest: "Istirahat \(tempoActivityDuration(restRemaining)). Napas tenang, tidak perlu terburu-buru."
         case .reflection: "Nilai usaha hari ini, bukan performa ideal."
         case .saved: "Aktivitas tercatat. Pemulihan tetap bagian dari program."
         }

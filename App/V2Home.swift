@@ -300,7 +300,7 @@ struct TempoProgramScreen: View {
                             Circle().fill(hasItem(on: date) ? TempoDesign.Palette.accentSoft : .clear).frame(width: 5, height: 5)
                         }
                         .foregroundStyle(isSelected ? Color.white : TempoDesign.Palette.textSecondary)
-                        .frame(width: 52, minHeight: 68)
+                        .frame(width: 52, height: 68)
                         .background(isSelected ? TempoDesign.Palette.accent : TempoDesign.Palette.surface, in: RoundedRectangle(cornerRadius: TempoDesign.Radius.small, style: .continuous))
                     }
                     .buttonStyle(TempoTactileButtonStyle())
