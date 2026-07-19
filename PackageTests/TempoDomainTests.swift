@@ -387,6 +387,38 @@ final class TempoDomainTests: XCTestCase {
         XCTAssertTrue(policy.shouldRetainExisting(rescheduled, now: scheduled.addingTimeInterval(-3_600), force: true))
     }
 
+    func testDailyRecommendationPrefersActionableRescheduleOverCompletedItem() {
+        let calendar = utcCalendar
+        let now = date(2026, 7, 20, hour: 10, calendar: calendar)
+        let completed = planItem(scheduledAt: date(2026, 7, 20, hour: 10, minute: 5, calendar: calendar), kind: .breathing)
+            .completed(as: .breathing, at: now)
+        let ordinary = planItem(scheduledAt: date(2026, 7, 20, hour: 14, calendar: calendar), kind: .cardio)
+        let rescheduled = ProgramPlanItem(
+            scheduledAt: date(2026, 7, 20, hour: 14, calendar: calendar),
+            prescribedKind: .guided,
+            estimatedMinutes: 20,
+            phase: .awareness,
+            reasons: [.guidedSpacing],
+            status: .adapted,
+            adaptation: PlanAdaptation(
+                adaptedAt: now,
+                originalKind: .guided,
+                replacementKind: .guided,
+                reasons: [.postponed, .safeReschedule],
+                rescheduledFromID: UUID()
+            )
+        )
+
+        let recommendation = DailyRecommendationEngine().prescription(
+            for: now,
+            items: [completed, ordinary, rescheduled],
+            context: ProgramContext(phase: .awareness, baselineCompleted: true),
+            calendar: calendar
+        )
+
+        XCTAssertEqual(recommendation.activity?.id, rescheduled.id)
+    }
+
     func testBaselineAnswersChangePrescriptionAndExerciseSelection() {
         let normal = SessionPrescriptionEngine().prescription(for: ProgramContext(phase: .awareness, baselineCompleted: true))
         let adapted = SessionPrescriptionEngine().prescription(for: ProgramContext(

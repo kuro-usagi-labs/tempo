@@ -128,4 +128,55 @@ final class TempoDomainTests: XCTestCase {
         XCTAssertEqual(decoded.sleepHours, 7)
         XCTAssertNil(decoded.weeklyMovementMinutes)
     }
+
+    func testNotificationSyncCancelsLegacyDeferredAndIndexedRequests() {
+        let identifiers = Set(LocalNotificationPlanSync.cancellationRequestIdentifiers(indexed: [
+            "tempo.plan.replaced-guided",
+            "tempo.plan.replaced-guided",
+            "tempo.daily-plan.3"
+        ]))
+
+        XCTAssertTrue(identifiers.contains("tempo.plan.replaced-guided"))
+        XCTAssertTrue(identifiers.contains("tempo.remind-later"))
+        XCTAssertTrue(identifiers.contains("tempo.daily-plan"))
+        XCTAssertEqual(identifiers.filter { $0.hasPrefix("tempo.daily-plan.") }.count, 7)
+    }
+
+    func testDailyRecommendationDoesNotLetCompletedItemMaskActionableReschedule() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let now = calendar.date(from: DateComponents(year: 2026, month: 7, day: 20, hour: 10))!
+        let completed = ProgramPlanItem(
+            scheduledAt: calendar.date(byAdding: .minute, value: 5, to: now)!,
+            prescribedKind: .breathing,
+            estimatedMinutes: 5,
+            phase: .awareness,
+            reasons: [.nervousSystemRecovery],
+            status: .completed
+        )
+        let rescheduled = ProgramPlanItem(
+            scheduledAt: calendar.date(byAdding: .hour, value: 4, to: now)!,
+            prescribedKind: .guided,
+            estimatedMinutes: 20,
+            phase: .awareness,
+            reasons: [.guidedSpacing],
+            status: .adapted,
+            adaptation: PlanAdaptation(
+                adaptedAt: now,
+                originalKind: .guided,
+                replacementKind: .guided,
+                reasons: [.postponed, .safeReschedule],
+                rescheduledFromID: UUID()
+            )
+        )
+
+        let recommendation = DailyRecommendationEngine().prescription(
+            for: now,
+            items: [completed, rescheduled],
+            context: ProgramContext(phase: .awareness, baselineCompleted: true),
+            calendar: calendar
+        )
+
+        XCTAssertEqual(recommendation.activity?.id, rescheduled.id)
+    }
 }

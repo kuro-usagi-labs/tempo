@@ -323,7 +323,9 @@ struct TempoPrivateSessionTimerScreen: View {
                         }
                     }
                 }
-                Toggle("Bantuan start–stop", isOn: $assistanceEnabled).tint(TempoDesign.Palette.accent)
+                Toggle("Bantuan start–stop", isOn: $assistanceEnabled)
+                    .tint(TempoDesign.Palette.accent)
+                    .accessibilityIdentifier("private.assistance.toggle")
                 if assistanceEnabled {
                     Toggle("Prompt suara lokal", isOn: $spokenPromptsEnabled).tint(TempoDesign.Palette.accent)
                     Text("Ambang otomatis \(prescription.pauseThreshold)/10 · pemulihan minimal \(prescription.recoverySeconds) detik")
@@ -339,7 +341,7 @@ struct TempoPrivateSessionTimerScreen: View {
                     TempoIntensitySelector(value: $intensity, accent: intensity >= prescription.pauseThreshold - 1 ? TempoDesign.Palette.caution : TempoDesign.Palette.accentSoft)
                 }
                 TempoPrimaryButton(assistanceEnabled ? "Jeda sekarang" : "Jeda", icon: "pause.fill") { manualPause() }
-                TempoSecondaryButton("Hampir keluar", icon: "hand.raised.fill", tone: .critical) { enterWarning(emergency: true) }
+                TempoSecondaryButton("Hampir keluar", icon: "hand.raised.fill", tone: .critical) { emergencyPause() }
                 Button("Akhiri sesi") { phase = .reflection }.foregroundStyle(TempoDesign.Palette.textSecondary).frame(minHeight: 44)
             }
         case .warning:
@@ -413,7 +415,12 @@ struct TempoPrivateSessionTimerScreen: View {
                 if hapticsEnabled { TempoFeedback.selection() }
                 speak("Cek intensitas")
             }
-            if totalSessionSeconds >= prescription.maximumDurationSeconds { phase = .reflection }
+            if totalSessionSeconds >= prescription.maximumDurationSeconds {
+                // The soft duration cap ended this run, so do not record it as
+                // an intentional user stop in the private-session outcome.
+                stoppedIntentionally = false
+                phase = .reflection
+            }
         case .recovery:
             currentRecoverySeconds += 1
             totalRecoverySeconds += 1
@@ -433,9 +440,27 @@ struct TempoPrivateSessionTimerScreen: View {
         else { phase = .paused; if hapticsEnabled { TempoFeedback.impact(.light) } }
     }
 
-    private func enterWarning(emergency: Bool) {
+    /// With assistance disabled, this remains a user-controlled pause rather
+    /// than silently switching the session into the assisted recovery flow.
+    /// The emergency signal is still retained for the post-session record.
+    private func emergencyPause() {
         guard phase == .active else { return }
-        if emergency { emergencyPauseCount += 1 }
+        emergencyPauseCount += 1
+        tooFast = true
+        if assistanceEnabled {
+            enterWarning(emergency: true, alreadyRecorded: true)
+        } else {
+            phase = .paused
+            if hapticsEnabled { TempoFeedback.impact(.light) }
+        }
+    }
+
+    private func enterWarning(emergency: Bool, alreadyRecorded: Bool = false) {
+        guard phase == .active else { return }
+        if emergency {
+            if !alreadyRecorded { emergencyPauseCount += 1 }
+            tooFast = true
+        }
         phase = .warning
         if hapticsEnabled { TempoFeedback.notification(.warning) }
         speak("Stop. Lepas tangan.")
@@ -678,7 +703,7 @@ struct TempoGuidedSessionScreen: View {
             if machine.cycles >= machine.maximumCycles {
                 TempoPrimaryButton("Lanjut ke refleksi", icon: "checkmark") { machine.complete(); showReflection = true }
             } else {
-                TempoPrimaryButton("Lanjutkan dengan pelan", icon: "play.fill") { machine.beginActive() }
+                TempoPrimaryButton("Lanjutkan dengan pelan", icon: "play.fill") { beginActive() }
                 TempoSecondaryButton("Cukup untuk hari ini", icon: "checkmark", tone: .positive) { finishEarly() }
             }
         }
@@ -749,8 +774,23 @@ struct TempoGuidedSessionScreen: View {
         prescription = history.sessionPrescription
         machine = GuidedSessionMachine(maximumCycles: prescription.maximumCycles, maximumDurationSeconds: prescription.maximumDurationSeconds)
     }
-    private func beginPreparation() { startedAt = .now; machine.start(); TempoFeedback.impact(.light) }
-    private func beginActive() { machine.beginActive(); TempoFeedback.selection() }
+    private func beginPreparation() {
+        startedAt = .now
+        machine.start()
+        if hapticsEnabled { TempoFeedback.impact(.light) }
+    }
+
+    private func beginActive() {
+        let previousState = machine.state
+        machine.beginActive()
+        guard [.activeLow, .activeRising].contains(machine.state), previousState != machine.state else { return }
+        arousalEvents.append(LocalArousalEvent(
+            timestampOffset: totalElapsed,
+            level: intensity,
+            eventType: previousState == .resumeReady ? "active-resume" : "active-start"
+        ))
+        if hapticsEnabled { TempoFeedback.selection() }
+    }
     private func tick(_ now: Date) {
         _ = now
         guard scenePhase == .active, startedAt != nil, !machine.isTerminal else { return }
@@ -807,6 +847,7 @@ struct TempoGuidedSessionScreen: View {
     private func saveSession() {
         guard !saved else { dismiss(); return }
         if !sessionPersisted {
+            finalizePendingPauseIfNeeded()
             guard history.addSession(
                 startedAt: startedAt,
                 cycles: machine.cycles,
@@ -859,8 +900,35 @@ struct TempoGuidedSessionScreen: View {
     }
 
     private func finishEarly() {
+        // Preparation has not begun the active training. Leaving here should
+        // not create an invalid, non-terminal session record or complete the
+        // scheduled activity.
+        if machine.state == .prepare {
+            machine.cancel()
+            dismiss()
+            return
+        }
         machine.earlyCompletion()
+        guard machine.state == .earlyCompletion else { return }
         showReflection = true
+    }
+
+    /// A user may end from the warning or recovery screen before tapping
+    /// "Periksa kesiapan". Keep that incomplete pause in the session record
+    /// so threshold, manual, emergency, and interruption events are not
+    /// discarded merely because the session ended early.
+    private func finalizePendingPauseIfNeeded() {
+        guard let startOffset = pendingPauseStart else { return }
+        pauseCycles.append(LocalPauseCycle(
+            index: pauseCycles.count + 1,
+            startOffset: startOffset,
+            endOffset: max(startOffset, totalElapsed),
+            arousalBefore: pendingPauseIntensity,
+            arousalAfter: intensity,
+            lateStop: machine.lastPauseReason == .almostTooLate,
+            successful: false
+        ))
+        pendingPauseStart = nil
     }
 
     private func handleScenePhase(_ phase: ScenePhase) {

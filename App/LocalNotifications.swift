@@ -6,6 +6,23 @@ extension Notification.Name {
     static let tempoPlanDidChange = Notification.Name("tempo.plan-did-change")
 }
 
+/// Keeps cancellation deterministic across plan mutations, including older
+/// reminder identifiers that may have been created by a previous app version.
+/// This stays independent from `UserNotifications` so its retention policy is
+/// directly covered by unit tests.
+enum LocalNotificationPlanSync {
+    static let legacyRequestIdentifiers = Set(
+        (0..<7).map { "tempo.daily-plan.\($0)" } + [
+            "tempo.daily-plan",
+            "tempo.remind-later"
+        ]
+    )
+
+    static func cancellationRequestIdentifiers(indexed: [String]) -> [String] {
+        Array(legacyRequestIdentifiers.union(indexed)).sorted()
+    }
+}
+
 @MainActor
 enum LocalNotifications {
     private static let planRequestIndexKey = "tempo.plan-reminder-index.v2"
@@ -16,17 +33,21 @@ enum LocalNotifications {
     }
     static func removeDailyPlan() {
         let indexed = UserDefaults.standard.stringArray(forKey: planRequestIndexKey) ?? []
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: (0..<7).map { "tempo.daily-plan.\($0)" } + ["tempo.daily-plan"] + indexed)
+        UNUserNotificationCenter.current().removePendingNotificationRequests(
+            withIdentifiers: LocalNotificationPlanSync.cancellationRequestIdentifiers(indexed: indexed)
+        )
         UserDefaults.standard.removeObject(forKey: planRequestIndexKey)
     }
     static func requestAndScheduleDailyPlan(hour: Int = 9, soundEnabled: Bool = false) async {
         let center = UNUserNotificationCenter.current()
+        // Remove an old schedule even if the permission request is declined or
+        // has since been revoked, so a stale plan can never keep notifying.
+        removeDailyPlan()
         let granted = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
         guard granted else { return }
         let remindLater = UNNotificationAction(identifier: "TEMPO_REMIND_LATER", title: "Ingatkan nanti")
         let skipToday = UNNotificationAction(identifier: "TEMPO_SKIP_TODAY", title: "Lewati hari ini")
         center.setNotificationCategories([UNNotificationCategory(identifier: "DAILY_PLAN", actions: [remindLater, skipToday], intentIdentifiers: [])])
-        removeDailyPlan()
         let safeHour = min(21, max(8, hour))
         let calendar = Calendar.current
         let startOffset = calendar.component(.hour, from: .now) >= safeHour ? 1 : 0
@@ -49,14 +70,20 @@ enum LocalNotifications {
     /// deduplicate a reschedule and stale requests are explicitly cancelled.
     static func requestAndSyncPlan(_ plan: [LocalPlanDay], fallbackHour: Int = 9, windowEndHour: Int = 21, soundEnabled: Bool = false) async {
         let center = UNUserNotificationCenter.current()
+        let previous = UserDefaults.standard.stringArray(forKey: planRequestIndexKey) ?? []
+        // Cancellation intentionally precedes authorization. If notifications
+        // are later denied, changed, skipped, or adapted items must not leave
+        // their previous reminder behind.
+        center.removePendingNotificationRequests(
+            withIdentifiers: LocalNotificationPlanSync.cancellationRequestIdentifiers(indexed: previous)
+        )
+        UserDefaults.standard.removeObject(forKey: planRequestIndexKey)
         let granted = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
         guard granted else { return }
         let remindLater = UNNotificationAction(identifier: "TEMPO_REMIND_LATER", title: "Ingatkan nanti")
         let skipToday = UNNotificationAction(identifier: "TEMPO_SKIP_TODAY", title: "Lewati hari ini")
         center.setNotificationCategories([UNNotificationCategory(identifier: "DAILY_PLAN", actions: [remindLater, skipToday], intentIdentifiers: [])])
 
-        let previous = UserDefaults.standard.stringArray(forKey: planRequestIndexKey) ?? []
-        center.removePendingNotificationRequests(withIdentifiers: previous)
         let calendar = Calendar.current
         let startHour = min(21, max(8, fallbackHour))
         let endHour = min(22, max(startHour, windowEndHour))

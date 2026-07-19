@@ -48,6 +48,20 @@ final class TempoUITests: XCTestCase {
         XCTAssertTrue(identifiedElement("guided.session").waitForExistence(timeout: 5))
     }
 
+    func testPrivateSessionWithoutAssistanceKeepsEmergencyPauseUserControlled() {
+        completeOnboarding()
+        completeImmediateFlow(choice: "Sesi privat")
+        XCTAssertTrue(identifiedElement("private.session.timer").waitForExistence(timeout: 5))
+
+        let assistance = identifiedElement("private.assistance.toggle")
+        XCTAssertTrue(assistance.waitForExistence(timeout: 5))
+        assistance.tap()
+        tapButton("Mulai dengan pelan")
+        tapButton("Hampir keluar")
+
+        XCTAssertTrue(app.buttons["Lanjut bila siap"].waitForExistence(timeout: 5))
+    }
+
     private func completeOnboarding() {
         tapNext()
         tapNext()

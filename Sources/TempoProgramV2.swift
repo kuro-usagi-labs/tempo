@@ -7,7 +7,7 @@ public struct RulesetVersion: RawRepresentable, Codable, Equatable, Hashable, Se
 
     public init(rawValue: String) { self.rawValue = rawValue }
 
-    public static let current = RulesetVersion(rawValue: "2.0.0")
+    public static let current = RulesetVersion(rawValue: "2.0.1")
 
     public static func < (lhs: RulesetVersion, rhs: RulesetVersion) -> Bool {
         lhs.rawValue.compare(rhs.rawValue, options: .numeric) == .orderedAscending
@@ -544,9 +544,32 @@ public struct DailyRecommendationEngine: Sendable {
     public init() {}
 
     public func prescription(for date: Date, items: [ProgramPlanItem], context: ProgramContext, calendar: Calendar = Calendar(identifier: .gregorian)) -> DailyPrescription {
-        let today = items.first {
-            calendar.isDate($0.scheduledAt, inSameDayAs: date) && $0.status.isActionable
-        }
+        // Callers can supply the persisted plan in any order.  Choosing the
+        // first row made a completed early item mask a later, actionable item
+        // on the same day. Keep the selection rules here, where both Today and
+        // any future caller get the same deterministic primary activity.
+        let today = items
+            .filter { calendar.isDate($0.scheduledAt, inSameDayAs: date) }
+            .sorted { lhs, rhs in
+                let lhsActionable = lhs.status.isActionable
+                let rhsActionable = rhs.status.isActionable
+                if lhsActionable != rhsActionable { return lhsActionable }
+
+                let lhsIncomplete = !lhs.status.isTerminal
+                let rhsIncomplete = !rhs.status.isTerminal
+                if lhsIncomplete != rhsIncomplete { return lhsIncomplete }
+
+                let lhsDistance = abs(lhs.scheduledAt.timeIntervalSince(date))
+                let rhsDistance = abs(rhs.scheduledAt.timeIntervalSince(date))
+                if lhsDistance != rhsDistance { return lhsDistance < rhsDistance }
+
+                let lhsRescheduled = lhs.adaptation?.rescheduledFromID != nil
+                let rhsRescheduled = rhs.adaptation?.rescheduledFromID != nil
+                if lhsRescheduled != rhsRescheduled { return lhsRescheduled }
+
+                return lhs.scheduledAt < rhs.scheduledAt
+            }
+            .first
         let insight: String
         if context.hasSafetyHold { insight = "Fokus minggu ini adalah pemulihan dan pemeriksaan ulang, tanpa mengejar target." }
         else if context.anxiety >= 8 { insight = "Ritme hari ini diringankan. Konsistensi kecil lebih penting daripada memaksa." }
