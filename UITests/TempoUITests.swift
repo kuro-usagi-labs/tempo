@@ -35,16 +35,28 @@ final class TempoUITests: XCTestCase {
 
         let range = identifiedElement("program.week.range")
         XCTAssertTrue(range.waitForExistence(timeout: 5))
+        let badge = identifiedElement("program.week.badge")
+        XCTAssertTrue(badge.waitForExistence(timeout: 5))
+        let currentWeek = badge.value as? String
+        XCTAssertNotNil(currentWeek)
         let next = identifiedElement("program.week.next")
         XCTAssertTrue(next.exists)
         XCTAssertTrue(next.isEnabled)
         next.tap()
         XCTAssertTrue(identifiedElement("program.week.previous").isEnabled)
+        let changedWeek = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value != %@", currentWeek ?? ""),
+            object: badge
+        )
+        wait(for: [changedWeek], timeout: 5)
+        let nextWeek = badge.value as? String
+        XCTAssertNotEqual(nextWeek, currentWeek)
 
         let today = identifiedElement("program.week.today")
         XCTAssertTrue(today.waitForExistence(timeout: 5))
         today.tap()
         XCTAssertTrue(range.exists)
+        XCTAssertEqual(badge.value as? String, currentWeek)
     }
 
     func testPrimaryActivityPromptsForDailyReadinessBeforeOpening() {
@@ -53,6 +65,54 @@ final class TempoUITests: XCTestCase {
         XCTAssertTrue(start.waitForExistence(timeout: 5))
         start.tap()
         XCTAssertTrue(identifiedElement("today.readiness.save").waitForExistence(timeout: 5))
+    }
+
+    func testPainReadinessRoutesToHealthCheckAndClearRecheckRestoresImmediatePrivateFlow() {
+        completeOnboarding()
+        let start = identifiedElement("today.primary.start")
+        XCTAssertTrue(start.waitForExistence(timeout: 5))
+        start.tap()
+
+        tapIdentified("today.readiness.symptom.yes")
+        tapIdentified("today.readiness.symptom.pain")
+        tapIdentified("today.readiness.save")
+
+        XCTAssertTrue(identifiedElement("health.check").waitForExistence(timeout: 5))
+        tapIdentifiedButton("health.check.confirmed")
+        tapIdentifiedButton("health.check.medicalFollowUp")
+        tapIdentifiedButton("health.check.submit")
+
+        XCTAssertTrue(app.tabBars.buttons["Hari Ini"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["Hari Ini"].tap()
+        XCTAssertTrue(identifiedElement("tab.today").waitForExistence(timeout: 5))
+        completeImmediateFlow(choice: "Sesi privat")
+        XCTAssertTrue(identifiedElement("private.session.timer").waitForExistence(timeout: 5))
+    }
+
+    func testProfileActivityPreferenceCanBeUpdatedWithoutRepeatingOnboarding() {
+        completeOnboarding()
+        app.tabBars.buttons["Profil"].tap()
+
+        tapIdentified("profile.activityPreference.open")
+        let preferenceSheet = identifiedElement("profile.activityPreference.sheet")
+        XCTAssertTrue(preferenceSheet.waitForExistence(timeout: 5))
+        tapIdentified("profile.activityPreference.breathingAndMobility")
+        XCTAssertTrue(identifiedElement("profile.activityPreference.validation").waitForExistence(timeout: 5))
+        tapNavigationBarButton("Selesai")
+        XCTAssertTrue(preferenceSheet.waitForNonExistence(timeout: 5))
+        let value = app.staticTexts["profile.activityPreference.value"]
+        XCTAssertTrue(value.waitForExistence(timeout: 5))
+        XCTAssertEqual(value.label, "Latihan napas dan mobilitas")
+    }
+
+    func testManualPostponeOpensTheLinkedReplacement() {
+        completeOnboarding()
+        app.tabBars.buttons["Program"].tap()
+
+        tapIdentified("program.plan.actionable")
+        XCTAssertTrue(identifiedElement("plan.detail.postpone").waitForExistence(timeout: 5))
+        tapIdentified("plan.detail.postpone")
+        XCTAssertTrue(identifiedElement("plan.detail.replacement").waitForExistence(timeout: 5))
     }
 
     func testImmediatePrivateRouteUsesThreeDecisionFlow() {
@@ -146,6 +206,46 @@ final class TempoUITests: XCTestCase {
         }
         XCTAssertTrue(button.waitForExistence(timeout: 5))
         XCTAssertTrue(button.isEnabled)
+        button.tap()
+    }
+
+    private func tapIdentified(_ identifier: String) {
+        let element = identifiedElement(identifier)
+        for _ in 0..<3 {
+            if element.waitForExistence(timeout: 1), element.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(element.waitForExistence(timeout: 5))
+        XCTAssertTrue(element.isHittable)
+        XCTAssertTrue(element.isEnabled)
+        element.tap()
+    }
+
+    /// Uses the concrete accessibility role for controls whose generic SwiftUI
+    /// descendants can otherwise resolve to a non-hittable label or container.
+    private func tapIdentifiedButton(_ identifier: String, scrollIntoView: Bool = true) {
+        let button = app.buttons[identifier]
+        if scrollIntoView {
+            for _ in 0..<3 {
+                if button.waitForExistence(timeout: 1), button.isHittable { break }
+                app.swipeUp()
+            }
+        }
+        XCTAssertTrue(button.waitForExistence(timeout: 5))
+        let enabled = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == 1"),
+            object: button
+        )
+        XCTAssertEqual(XCTWaiter().wait(for: [enabled], timeout: 5), .completed)
+        XCTAssertTrue(button.isHittable)
+        button.tap()
+    }
+
+    private func tapNavigationBarButton(_ label: String) {
+        let button = app.navigationBars.buttons[label]
+        XCTAssertTrue(button.waitForExistence(timeout: 5))
+        XCTAssertTrue(button.isEnabled)
+        XCTAssertTrue(button.isHittable)
         button.tap()
     }
 

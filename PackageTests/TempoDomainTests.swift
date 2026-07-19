@@ -147,63 +147,6 @@ final class TempoDomainTests: XCTestCase {
         XCTAssertEqual(tracker.completedCycles, 2)
     }
 
-    func testUrgentSymptomsBlockGuidedTraining() {
-        var context = DecisionContext()
-        context.intent = .training
-        context.bloodReported = true
-        let recommendation = RuleEngine().evaluate(context)
-        XCTAssertEqual(recommendation.action, .healthCheck)
-        XCTAssertTrue(recommendation.blocksGuidedTraining)
-    }
-
-    func testSafetyHoldAlwaysBlocksTraining() {
-        var context = DecisionContext()
-        context.programPhase = .safetyHold
-        context.intent = .training
-        context.urgeIntensity = 7
-        let recommendation = RuleEngine().evaluate(context)
-        XCTAssertEqual(recommendation.action, .healthCheck)
-        XCTAssertTrue(recommendation.blocksGuidedTraining)
-    }
-
-    func testGuidedTrainingRequiresBaseline() {
-        var context = DecisionContext()
-        context.programPhase = .assessmentRequired
-        context.intent = .training
-        XCTAssertTrue(RuleEngine().evaluate(context).blocksGuidedTraining)
-    }
-
-    func testRecentSessionRoutesToRecovery() {
-        var context = DecisionContext()
-        context.programPhase = .awareness
-        context.hoursSinceLastSession = 6
-        context.intent = .training
-        XCTAssertEqual(RuleEngine().evaluate(context).action, .recovery)
-    }
-
-    func testSessionWithinTwentyFourHoursRoutesToRecovery() {
-        var context = DecisionContext()
-        context.programPhase = .awareness
-        context.hoursSinceLastSession = 18
-        context.urgeIntensity = 6
-        context.trigger = .desire
-        context.intent = .training
-        XCTAssertEqual(RuleEngine().evaluate(context).action, .recovery)
-    }
-
-    func testSchedulerKeepsGuidedSessionsApart() {
-        let days = WeeklyScheduler().beginnerPlan().filter { $0.kind == .guided }.map(\.day)
-        XCTAssertEqual(days, [0, 3])
-    }
-
-    func testSchedulerAlwaysProducesSevenDaysAndRecovery() {
-        for plan in [WeeklyScheduler().beginnerPlan(), WeeklyScheduler().beginnerPlan(highStress: true), WeeklyScheduler().beginnerPlan(irritation: true)] {
-            XCTAssertEqual(plan.map(\.day), Array(0...6))
-            XCTAssertTrue(plan.contains { $0.kind == .recovery })
-            XCTAssertLessThanOrEqual(plan.filter { $0.kind == .guided }.count, 3)
-        }
-    }
-
     func testPlanConstraintsReplaceUnsafeOrUnavailableActivities() {
         let resolver = PlanActivityResolver()
         XCTAssertEqual(resolver.effectiveKind(.cardio, exerciseRestricted: true, guidedAllowed: true, isToday: false), .recovery)
@@ -280,24 +223,6 @@ final class TempoDomainTests: XCTestCase {
         XCTAssertEqual(scores(recovery: 1).control, 15)
     }
 
-    func testEveryPhysicalSafetyFlagWinsOverReadiness() {
-        let mutations: [(inout DecisionContext) -> Void] = [
-            { $0.pain = true }, { $0.irritation = true }, { $0.urinaryBurning = true },
-            { $0.unusualDischarge = true }, { $0.bloodReported = true },
-            { $0.pelvicOrTesticularPain = true }, { $0.fever = true }
-        ]
-        for mutation in mutations {
-            var context = DecisionContext()
-            context.programPhase = .awareness
-            context.intent = .training
-            context.urgeIntensity = 9
-            mutation(&context)
-            let result = RuleEngine().evaluate(context)
-            XCTAssertTrue(result.blocksGuidedTraining)
-            XCTAssertTrue(result.reasonCode.hasPrefix("safety."))
-        }
-    }
-
     func testEligibilityGateCannotBypassBaselineHoldOrRecovery() {
         let evaluator = GuidedEligibilityEvaluator()
         XCTAssertEqual(evaluator.evaluate(programPhase: .assessmentRequired, hoursSinceLastSession: nil, guidedSessionsLast7Days: 0).reason, .baselineRequired)
@@ -349,18 +274,6 @@ final class TempoDomainTests: XCTestCase {
         let session = GuidedSessionMachine(maximumCycles: 99, maximumDurationSeconds: 9_999)
         XCTAssertEqual(session.maximumCycles, 5)
         XCTAssertEqual(session.maximumDurationSeconds, 1_500)
-    }
-
-    func testAllProgramPlansHaveSevenDaysAndValidGuidedSpacing() {
-        let scheduler = WeeklyScheduler()
-        for phase in ProgramPhase.allCases {
-            let plan = scheduler.plan(for: phase)
-            XCTAssertEqual(plan.map(\.day), Array(0...6))
-            XCTAssertLessThanOrEqual(plan.filter { $0.kind == .guided }.count, 3)
-            let guidedDays = plan.filter { $0.kind == .guided }.map(\.day)
-            for pair in zip(guidedDays, guidedDays.dropFirst()) { XCTAssertGreaterThanOrEqual(pair.1 - pair.0, 2) }
-            XCTAssertTrue(plan.contains { $0.kind == .recovery })
-        }
     }
 
     func testWeeklyPlanGeneratorProducesRealMondayToSundayAwarenessPlan() {
@@ -836,6 +749,377 @@ final class TempoDomainTests: XCTestCase {
             0.5
         )
         XCTAssertNil(engine.consistency(for: [future, recovery], through: start, calendar: calendar))
+    }
+
+    func testDailySymptomTypesMapToConservativeSafetyRules() {
+        let expectations: [(DailySymptomType, RecommendationSeverity?, String?)] = [
+            (.none, nil, nil),
+            (.mildIrritation, .caution, "safety.daily-readiness-irritation"),
+            (.pain, .medical, "safety.daily-readiness-pain"),
+            (.urinaryOrDischarge, .medical, "safety.daily-readiness-urinary-discharge"),
+            (.bloodOrFever, .urgent, "safety.daily-readiness-blood-fever")
+        ]
+
+        for (symptom, severity, reason) in expectations {
+            XCTAssertEqual(symptom.safetySeverity, severity)
+            XCTAssertEqual(symptom.safetyReasonCode, reason)
+            XCTAssertEqual(symptom.requiresSafetyHold, symptom != .none)
+        }
+    }
+
+    func testProgramWeekCalculatorUsesViewedWeekAndClampsItsDisplay() {
+        let calendar = utcCalendar
+        let baseline = date(2026, 7, 13, hour: 9, calendar: calendar)
+        let calculator = ProgramWeekCalculator()
+
+        XCTAssertEqual(calculator.displayedWeek(baselineCompletedAt: baseline, weekStarting: date(2026, 7, 6, calendar: calendar), calendar: calendar), 1)
+        XCTAssertEqual(calculator.displayedWeek(baselineCompletedAt: baseline, weekStarting: baseline, calendar: calendar), 1)
+        XCTAssertEqual(calculator.displayedWeek(baselineCompletedAt: baseline, weekStarting: date(2026, 7, 20, calendar: calendar), calendar: calendar), 2)
+        XCTAssertEqual(calculator.displayedWeek(baselineCompletedAt: baseline, weekStarting: date(2027, 1, 4, calendar: calendar), calendar: calendar), 12)
+        XCTAssertEqual(calculator.displayedWeek(baselineCompletedAt: nil, weekStarting: date(2026, 9, 7, calendar: calendar), calendar: calendar), 1)
+    }
+
+    func testScheduleEvaluatorBlocksUnsafeGuidedCandidates() {
+        let calendar = utcCalendar
+        let now = date(2026, 7, 15, hour: 13, calendar: calendar)
+        let candidate = date(2026, 7, 15, hour: 18, minute: 30, calendar: calendar)
+        let source = planItem(scheduledAt: date(2026, 7, 13, hour: 18, minute: 30, calendar: calendar), kind: .guided)
+        let evaluator = ScheduleConstraintEvaluator()
+        let base = ProgramContext(phase: .awareness, baselineCompleted: true)
+
+        let safety = evaluator.evaluate(
+            source: source, candidate: candidate, items: [source], scheduleHistory: ProgramScheduleHistory(),
+            context: ProgramContext(phase: .awareness, baselineCompleted: true, hasSafetyHold: true), now: now, calendar: calendar
+        )
+        XCTAssertTrue(safety.blockers.contains(.safetyHold))
+
+        let privateRecovery = evaluator.evaluate(
+            source: source, candidate: candidate, items: [source],
+            scheduleHistory: ProgramScheduleHistory(privateSessionDates: [date(2026, 7, 15, hour: 8, calendar: calendar)]),
+            context: base, now: now, calendar: calendar
+        )
+        XCTAssertTrue(privateRecovery.blockers.contains(.privateRecoveryWindow))
+
+        let guidedSpacing = evaluator.evaluate(
+            source: source, candidate: candidate, items: [source],
+            scheduleHistory: ProgramScheduleHistory(guidedSessionDates: [date(2026, 7, 14, hour: 18, minute: 30, calendar: calendar)]),
+            context: base, now: now, calendar: calendar
+        )
+        XCTAssertTrue(guidedSpacing.blockers.contains(.guidedSpacing))
+
+        let weeklyLimit = evaluator.evaluate(
+            source: source, candidate: candidate, items: [source],
+            scheduleHistory: ProgramScheduleHistory(
+                guidedSessionDates: [
+                    date(2026, 7, 9, hour: 18, minute: 30, calendar: calendar),
+                    date(2026, 7, 11, hour: 18, minute: 30, calendar: calendar),
+                    date(2026, 7, 12, hour: 18, minute: 30, calendar: calendar)
+                ],
+                hasCompleteGuidedHistory: true
+            ),
+            context: base, now: now, calendar: calendar
+        )
+        XCTAssertTrue(weeklyLimit.blockers.contains(.guidedWeeklyLimit))
+
+        let demanding = planItem(scheduledAt: date(2026, 7, 15, hour: 9, calendar: calendar), kind: .cardio)
+        let demandingDay = evaluator.evaluate(
+            source: source, candidate: candidate, items: [source, demanding], scheduleHistory: ProgramScheduleHistory(),
+            context: base, now: now, calendar: calendar
+        )
+        XCTAssertTrue(demandingDay.blockers.contains(.demandingActivity))
+
+        let review = planItem(scheduledAt: date(2026, 7, 15, hour: 19, minute: 30, calendar: calendar), kind: .review)
+        let reviewDay = evaluator.evaluate(
+            source: source, candidate: candidate, items: [source, review], scheduleHistory: ProgramScheduleHistory(),
+            context: base, now: now, calendar: calendar
+        )
+        XCTAssertTrue(reviewDay.blockers.contains(.reviewDay))
+    }
+
+    func testScheduleEvaluatorBlocksRestrictedAndCollidingMovement() {
+        let calendar = utcCalendar
+        let now = date(2026, 7, 15, hour: 13, calendar: calendar)
+        let candidate = date(2026, 7, 16, hour: 18, calendar: calendar)
+        let source = planItem(scheduledAt: date(2026, 7, 13, hour: 18, calendar: calendar), kind: .strength)
+        let sameDayCardio = planItem(scheduledAt: date(2026, 7, 16, hour: 9, calendar: calendar), kind: .cardio)
+
+        let evaluation = ScheduleConstraintEvaluator().evaluate(
+            source: source,
+            candidate: candidate,
+            items: [source, sameDayCardio],
+            scheduleHistory: ProgramScheduleHistory(),
+            context: ProgramContext(
+                phase: .awareness,
+                baselineCompleted: true,
+                exerciseRestricted: true,
+                hasSafeActivitySpace: false
+            ),
+            now: now,
+            calendar: calendar
+        )
+
+        XCTAssertTrue(evaluation.blockers.contains(.exerciseRestriction))
+        XCTAssertTrue(evaluation.blockers.contains(.unsafeActivitySpace))
+        XCTAssertTrue(evaluation.blockers.contains(.demandingActivity))
+    }
+
+    func testScheduleEvaluatorPreventsASecondReplacementForTheSameSource() {
+        let calendar = utcCalendar
+        let now = date(2026, 7, 15, hour: 8, calendar: calendar)
+        let source = planItem(scheduledAt: date(2026, 7, 13, hour: 18, minute: 30, calendar: calendar), kind: .guided)
+        let existingReplacement = ProgramPlanItem(
+            scheduledAt: date(2026, 7, 18, hour: 18, minute: 30, calendar: calendar),
+            prescribedKind: .guided,
+            estimatedMinutes: 20,
+            phase: .awareness,
+            reasons: [.guidedSpacing],
+            status: .adapted,
+            adaptation: PlanAdaptation(
+                adaptedAt: now,
+                originalKind: .guided,
+                replacementKind: .guided,
+                reasons: [.postponed, .safeReschedule],
+                rescheduledFromID: source.id
+            )
+        )
+
+        let evaluation = ScheduleConstraintEvaluator().evaluate(
+            source: source,
+            candidate: date(2026, 7, 17, hour: 18, minute: 30, calendar: calendar),
+            items: [source, existingReplacement],
+            scheduleHistory: ProgramScheduleHistory(),
+            context: ProgramContext(phase: .awareness, baselineCompleted: true),
+            now: now,
+            calendar: calendar
+        )
+
+        XCTAssertTrue(evaluation.blockers.contains(.duplicateReplacement))
+    }
+
+    func testScheduleEvaluatorUsesConcreteHistoryInsteadOfStaleAggregate() {
+        let calendar = utcCalendar
+        let now = date(2026, 7, 15, hour: 8, calendar: calendar)
+        let candidate = date(2026, 7, 16, hour: 18, minute: 30, calendar: calendar)
+        let source = planItem(scheduledAt: date(2026, 7, 8, hour: 18, minute: 30, calendar: calendar), kind: .guided)
+        let history = ProgramScheduleHistory(
+            guidedSessionDates: [
+                date(2026, 7, 10, hour: 18, minute: 30, calendar: calendar),
+                date(2026, 7, 13, hour: 18, minute: 30, calendar: calendar)
+            ],
+            hasCompleteGuidedHistory: true
+        )
+        let context = ProgramContext(phase: .awareness, baselineCompleted: true, guidedSessionsLast7Days: 3)
+
+        let evaluation = ScheduleConstraintEvaluator().evaluate(
+            source: source, candidate: candidate, items: [source], scheduleHistory: history,
+            context: context, now: now, calendar: calendar
+        )
+
+        XCTAssertTrue(evaluation.isAllowed)
+        XCTAssertFalse(evaluation.blockers.contains(.guidedWeeklyLimit))
+    }
+
+    func testScheduleEvaluatorDeduplicatesCompletedPlanAndHistoryDates() {
+        let calendar = utcCalendar
+        let now = date(2026, 7, 15, hour: 8, calendar: calendar)
+        let candidate = date(2026, 7, 16, hour: 18, minute: 30, calendar: calendar)
+        let historicalGuided = date(2026, 7, 13, hour: 18, minute: 30, calendar: calendar)
+        let source = planItem(scheduledAt: date(2026, 7, 8, hour: 18, minute: 30, calendar: calendar), kind: .guided)
+        let completed = planItem(scheduledAt: historicalGuided, kind: .guided)
+            .completed(as: .guided, at: historicalGuided.addingTimeInterval(30 * 60))
+        let history = ProgramScheduleHistory(guidedSessionDates: [historicalGuided], hasCompleteGuidedHistory: true)
+
+        let evaluation = ScheduleConstraintEvaluator().evaluate(
+            source: source,
+            candidate: candidate,
+            items: [source, completed],
+            scheduleHistory: history,
+            context: ProgramContext(phase: .awareness, baselineCompleted: true, guidedSessionsLast7Days: 3),
+            now: now,
+            calendar: calendar
+        )
+
+        XCTAssertTrue(evaluation.isAllowed)
+        XCTAssertFalse(evaluation.blockers.contains(.guidedWeeklyLimit))
+    }
+
+    func testScheduleEvaluatorCountsThreeConcreteGuidedEventsInCandidateWindow() {
+        let calendar = utcCalendar
+        let now = date(2026, 7, 15, hour: 8, calendar: calendar)
+        let candidate = date(2026, 7, 16, hour: 18, minute: 30, calendar: calendar)
+        let source = planItem(scheduledAt: date(2026, 7, 8, hour: 18, minute: 30, calendar: calendar), kind: .guided)
+        let history = ProgramScheduleHistory(
+            guidedSessionDates: [
+                date(2026, 7, 10, hour: 18, minute: 30, calendar: calendar),
+                date(2026, 7, 11, hour: 18, minute: 30, calendar: calendar),
+                date(2026, 7, 13, hour: 18, minute: 30, calendar: calendar)
+            ],
+            hasCompleteGuidedHistory: true
+        )
+
+        let evaluation = ScheduleConstraintEvaluator().evaluate(
+            source: source,
+            candidate: candidate,
+            items: [source],
+            scheduleHistory: history,
+            context: ProgramContext(phase: .awareness, baselineCompleted: true),
+            now: now,
+            calendar: calendar
+        )
+
+        XCTAssertTrue(evaluation.blockers.contains(.guidedWeeklyLimit))
+    }
+
+    func testScheduleEvaluatorCountsScheduledFutureGuidedAndKeepsAggregateWhenHistoryIsPartial() {
+        let calendar = utcCalendar
+        let now = date(2026, 7, 15, hour: 8, calendar: calendar)
+        let candidate = date(2026, 7, 16, hour: 18, minute: 30, calendar: calendar)
+        let source = planItem(scheduledAt: date(2026, 7, 8, hour: 18, minute: 30, calendar: calendar), kind: .guided)
+        let scheduled = planItem(scheduledAt: date(2026, 7, 15, hour: 18, minute: 30, calendar: calendar), kind: .guided)
+
+        let scheduledEvaluation = ScheduleConstraintEvaluator().evaluate(
+            source: source,
+            candidate: candidate,
+            items: [source, scheduled],
+            scheduleHistory: ProgramScheduleHistory(hasCompleteGuidedHistory: true),
+            context: ProgramContext(phase: .awareness, baselineCompleted: true),
+            now: now,
+            calendar: calendar
+        )
+        XCTAssertTrue(scheduledEvaluation.blockers.contains(.guidedSpacing))
+
+        let partialHistoryEvaluation = ScheduleConstraintEvaluator().evaluate(
+            source: source,
+            candidate: candidate,
+            items: [source],
+            scheduleHistory: ProgramScheduleHistory(scheduledGuidedDates: [date(2026, 7, 5, hour: 18, minute: 30, calendar: calendar)]),
+            context: ProgramContext(phase: .awareness, baselineCompleted: true, guidedSessionsLast7Days: 3),
+            now: now,
+            calendar: calendar
+        )
+        XCTAssertTrue(partialHistoryEvaluation.blockers.contains(.guidedWeeklyLimit))
+    }
+
+    func testManualRescheduleKeepsFutureSourceInPlaceAndCreatesAuditablePair() {
+        let calendar = utcCalendar
+        let now = date(2026, 7, 14, hour: 8, calendar: calendar)
+        let source = planItem(scheduledAt: date(2026, 7, 18, hour: 18, minute: 30, calendar: calendar), kind: .guided)
+
+        guard let result = AdaptationPolicy().manualReschedule(
+            source,
+            now: now,
+            items: [source],
+            context: ProgramContext(phase: .awareness, baselineCompleted: true),
+            calendar: calendar
+        ) else {
+            return XCTFail("Expected a safe manual replacement")
+        }
+
+        XCTAssertEqual(result.skippedSource.status, .skipped)
+        XCTAssertTrue(result.skippedSource.adaptation?.reasons.contains(.postponed) == true)
+        XCTAssertEqual(result.rescheduledItem.adaptation?.rescheduledFromID, source.id)
+        XCTAssertGreaterThan(result.rescheduledItem.scheduledAt, source.scheduledAt)
+    }
+
+    func testManualRescheduleUsesTheSharedPrivateSpacingAndReviewConstraints() {
+        let calendar = utcCalendar
+        let now = date(2026, 7, 14, hour: 8, calendar: calendar)
+        let source = planItem(scheduledAt: date(2026, 7, 15, hour: 18, minute: 30, calendar: calendar), kind: .guided)
+        let existingGuided = planItem(scheduledAt: date(2026, 7, 17, hour: 18, minute: 30, calendar: calendar), kind: .guided)
+        let review = planItem(scheduledAt: date(2026, 7, 19, hour: 19, minute: 30, calendar: calendar), kind: .review)
+        let history = ProgramScheduleHistory(
+            privateSessionDates: [date(2026, 7, 16, hour: 12, calendar: calendar)],
+            hasCompleteGuidedHistory: true
+        )
+
+        let result = AdaptationPolicy().manualReschedule(
+            source,
+            now: now,
+            items: [source, existingGuided, review],
+            scheduleHistory: history,
+            context: ProgramContext(phase: .awareness, baselineCompleted: true),
+            calendar: calendar
+        )
+
+        XCTAssertEqual(result?.rescheduledItem.scheduledAt, date(2026, 7, 20, hour: 18, minute: 30, calendar: calendar))
+        XCTAssertEqual(result?.rescheduledItem.adaptation?.rescheduledFromID, source.id)
+    }
+
+    func testManualAndAutomaticReschedulingRefuseAnActiveSafetyHold() {
+        let calendar = utcCalendar
+        let now = date(2026, 7, 14, hour: 8, calendar: calendar)
+        let manual = planItem(scheduledAt: date(2026, 7, 17, hour: 18, minute: 30, calendar: calendar), kind: .guided)
+        let missed = planItem(scheduledAt: date(2026, 7, 13, hour: 18, minute: 30, calendar: calendar), kind: .guided)
+        let context = ProgramContext(phase: .awareness, baselineCompleted: true, hasSafetyHold: true)
+        let policy = AdaptationPolicy()
+
+        XCTAssertNil(policy.manualReschedule(manual, now: now, items: [manual], context: context, calendar: calendar))
+        XCTAssertNil(policy.automaticRescheduleMissedGuided(missed, now: now, items: [missed], context: context, calendar: calendar))
+    }
+
+    func testProgressConsistencyCountsPostponedSourceAndReplacementOnlyOnce() {
+        let calendar = utcCalendar
+        let sourceDate = date(2026, 7, 13, hour: 18, minute: 30, calendar: calendar)
+        let source = planItem(scheduledAt: sourceDate, kind: .guided)
+        let skippedSource = source.skipped(reasons: [.postponed, .safeReschedule], at: sourceDate.addingTimeInterval(60))
+        let replacement = ProgramPlanItem(
+            scheduledAt: date(2026, 7, 14, hour: 18, minute: 30, calendar: calendar),
+            prescribedKind: .guided,
+            estimatedMinutes: 20,
+            phase: .awareness,
+            reasons: [.guidedSpacing],
+            status: .adapted,
+            adaptation: PlanAdaptation(
+                adaptedAt: sourceDate,
+                originalKind: .guided,
+                replacementKind: .guided,
+                reasons: [.postponed, .safeReschedule],
+                rescheduledFromID: source.id
+            )
+        ).completed(as: .guided, at: date(2026, 7, 14, hour: 19, calendar: calendar))
+
+        let result = ProgressEngine().consistency(
+            for: [skippedSource, replacement],
+            through: date(2026, 7, 14, hour: 23, calendar: calendar),
+            calendar: calendar
+        )
+
+        XCTAssertEqual(result ?? -1, 1.0, accuracy: 0.0001)
+    }
+
+    func testProgressConsistencyDeduplicatesLegacyReplacementChildrenAndExcludesRecovery() {
+        let calendar = utcCalendar
+        let sourceDate = date(2026, 7, 13, hour: 18, minute: 30, calendar: calendar)
+        let source = planItem(scheduledAt: sourceDate, kind: .guided)
+        let skippedSource = source.skipped(reasons: [.postponed, .safeReschedule], at: sourceDate)
+        let completedReplacement = ProgramPlanItem(
+            scheduledAt: date(2026, 7, 14, hour: 18, minute: 30, calendar: calendar),
+            prescribedKind: .guided,
+            estimatedMinutes: 20,
+            phase: .awareness,
+            reasons: [.guidedSpacing],
+            status: .adapted,
+            adaptation: PlanAdaptation(adaptedAt: sourceDate, originalKind: .guided, replacementKind: .guided, reasons: [.postponed], rescheduledFromID: source.id)
+        ).completed(as: .guided, at: date(2026, 7, 14, hour: 19, calendar: calendar))
+        let staleReplacement = ProgramPlanItem(
+            scheduledAt: date(2026, 7, 15, hour: 18, minute: 30, calendar: calendar),
+            prescribedKind: .guided,
+            estimatedMinutes: 20,
+            phase: .awareness,
+            reasons: [.guidedSpacing],
+            status: .adapted,
+            adaptation: PlanAdaptation(adaptedAt: sourceDate, originalKind: .guided, replacementKind: .guided, reasons: [.postponed], rescheduledFromID: source.id)
+        )
+        let recovery = planItem(scheduledAt: sourceDate, kind: .recovery)
+            .adapted(to: .recovery, reasons: [.nervousSystemRecovery], at: sourceDate)
+
+        let result = ProgressEngine().consistency(
+            for: [skippedSource, completedReplacement, staleReplacement, recovery],
+            through: date(2026, 7, 16, hour: 9, calendar: calendar),
+            calendar: calendar
+        )
+
+        XCTAssertEqual(result ?? -1, 1.0, accuracy: 0.0001)
     }
 
     private var utcCalendar: Calendar {

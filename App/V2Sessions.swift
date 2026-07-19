@@ -7,6 +7,25 @@ private func tempoDuration(_ seconds: Int) -> String {
     return "\(safe / 60):\(String(format: "%02d", safe % 60))"
 }
 
+/// Shared V2 breathing cue. It deliberately lives with the active V2 session
+/// flows so the retired V1 views are no longer compiled merely for this small
+/// visual component.
+struct BreathingOrbView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var expanded = false
+
+    var body: some View {
+        Circle()
+            .fill(LinearGradient(colors: [.indigo, .cyan], startPoint: .topLeading, endPoint: .bottomTrailing))
+            .frame(width: 150, height: 150)
+            .shadow(color: .cyan.opacity(0.5), radius: 24)
+            .scaleEffect(expanded || reduceMotion ? 1 : 0.72)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 4).repeatForever(autoreverses: true), value: expanded)
+            .onAppear { expanded = true }
+            .accessibilityLabel("Panduan napas")
+    }
+}
+
 private extension ImmediateActionChoice {
     var id: String { rawValue }
     var title: String {
@@ -143,11 +162,16 @@ struct TempoImmediateActionScreen: View {
         }
         let activeHold = history.activeSafetyHold
         let activeHoldSeverity = activeHold.flatMap { RecommendationSeverity(rawValue: $0.severity) }
+        let todayReadiness = history.todayReadiness
+        // Recent sessions are a useful trend, but they must not become an
+        // assertion about the user's state right now. Only today's check-in
+        // can trigger current anxiety/sleep advisories in this quick route.
+        let immediateAnxiety = todayReadiness?.anxietyToday ?? min(7, history.baseline?.anxiety ?? 5)
         let request = ImmediateActionRequest(
             choice: choice,
             intensity: intensity,
-            anxiety: Int((history.currentAnxiety ?? 5).rounded()),
-            sleepHours: history.programContext.sleepHours,
+            anxiety: immediateAnxiety,
+            sleepHours: todayReadiness?.sleepHoursLastNight,
             hoursSinceLastGuidedSession: history.hoursSinceLastSession,
             hoursSinceLastPrivateSession: history.hoursSinceLastPrivateSession,
             guidedSessionsLast7Days: history.guidedSessionsLast7Days,

@@ -270,6 +270,7 @@ struct TempoWeeklyReviewScreen: View {
     private var insight: String {
         if history.sessions.isEmpty && history.exercises.isEmpty { return "Mulai dengan satu langkah kecil. Tidak ada skor yang perlu dikejar sebelum cukup data terkumpul." }
         if history.isHighStress { return "Kecemasan yang tinggi adalah alasan untuk menurunkan tempo, bukan alasan untuk memaksa konsistensi." }
+        if history.hasElevatedGuidedSessionAnxietyTrend { return "Sesi terpandu terakhir menunjukkan tren kecemasan lebih tinggi. Ini bukan penilaian kondisi hari ini." }
         if completedCount == dueItems.count && !dueItems.isEmpty { return "Kamu menjaga ritme pada semua langkah yang sudah jatuh tempo. Pertahankan jeda yang realistis." }
         return "Perhatikan waktu atau konteks yang membuat jeda lebih mudah. Rencana dapat disesuaikan tanpa perlu mengejar yang terlewat." }
 }
