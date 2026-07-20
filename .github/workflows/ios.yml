@@ -7,7 +7,42 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ios-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  compile-review:
+    if: github.event_name == 'pull_request'
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install project generator
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate
+      - name: Compile app and app-unit tests without booting a simulator
+        run: |
+          mkdir -p build/logs
+          set -o pipefail
+          xcodebuild build-for-testing \
+            -project Tempo.xcodeproj \
+            -scheme Tempo \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$PWD/build/CompileDerivedData" \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee build/logs/compile-review.log
+      - name: Upload compile diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tempo-ux-compile-diagnostics
+          path: build/logs
+          if-no-files-found: ignore
+          retention-days: 7
+
   test-and-package:
     runs-on: macos-15
     permissions:
@@ -25,7 +60,9 @@ jobs:
           ! rg --glob '*.swift' 'URLSession|NWConnection|Alamofire|Firebase|Analytics|CloudKit|OpenAI|Anthropic' App Sources
       - name: Select an available iPhone simulator
         id: simulator
+        timeout-minutes: 6
         run: |
+          xcrun simctl shutdown all || true
           simulator_id="$(xcrun simctl list devices available | awk -F '[()]' '/iPhone/{print $2; exit}')"
           test -n "$simulator_id"
           echo "id=$simulator_id" >> "$GITHUB_OUTPUT"
@@ -33,7 +70,17 @@ jobs:
           xcrun simctl bootstatus "$simulator_id" -b
       - name: Run focused hotfix UI tests
         run: |
-          xcodebuild test -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath "$PWD/build/DerivedData" CODE_SIGNING_ALLOWED=NO -only-testing:TempoUITests/TempoUITests/testManualPostponeOpensTheLinkedReplacement -only-testing:TempoUITests/TempoUITests/testMultipleSafetyHoldsNeedConfirmationBeforeClearRecheck
+          mkdir -p build/logs
+          set -o pipefail
+          xcodebuild test -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath "$PWD/build/DerivedData" CODE_SIGNING_ALLOWED=NO -only-testing:TempoUITests/TempoUITests/testManualPostponeOpensTheLinkedReplacement -only-testing:TempoUITests/TempoUITests/testMultipleSafetyHoldsNeedConfirmationBeforeClearRecheck 2>&1 | tee build/logs/focused-ui.log
+      - name: Upload review-branch diagnostic log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tempo-ux-review-diagnostics
+          path: build/logs
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Run iOS unit and UI tests
         run: |
           xcodebuild test -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath "$PWD/build/DerivedData" CODE_SIGNING_ALLOWED=NO
@@ -88,15 +135,14 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: Tempo-resign-ready-ipa
-          path: build
+          path: release-assets
       - name: Verify release checksum
-        run: shasum -a 256 -c Tempo-resign-ready.ipa.sha256
-        working-directory: build
+        run: (cd release-assets && sha256sum --check Tempo-resign-ready.ipa.sha256)
       - name: Publish sideload release
         uses: softprops/action-gh-release@v2
         with:
           name: TEMPO ${{ github.ref_name }}
           body_path: RELEASE_NOTES.md
           files: |
-            build/Tempo-resign-ready.ipa
-            build/Tempo-resign-ready.ipa.sha256
+            release-assets/Tempo-resign-ready.ipa
+            release-assets/Tempo-resign-ready.ipa.sha256
