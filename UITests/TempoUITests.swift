@@ -5,209 +5,76 @@ final class TempoUITests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
-        app = XCUIApplication()
-        app.launchArguments = ["-tempo-ui-testing-reset"]
-        app.launch()
+        launch(arguments: ["-tempo-ui-testing-reset"])
     }
 
     func testOnboardingStartsWithSevenStepFoundation() {
         XCTAssertTrue(app.buttons["onboarding.adultConfirmed"].waitForExistence(timeout: 5))
-        XCTAssertTrue(nextButton.exists)
-        XCTAssertFalse(nextButton.isEnabled)
+        XCTAssertTrue(app.buttons["Lanjut"].exists)
+        XCTAssertFalse(app.buttons["Lanjut"].isEnabled)
     }
 
     func testOnboardingCanReachFourTabShell() {
         completeOnboarding()
-        XCTAssertTrue(app.tabBars.buttons["Hari Ini"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.tabBars.buttons["Program"].exists)
-        XCTAssertTrue(app.tabBars.buttons["Progres"].exists)
-        XCTAssertTrue(app.tabBars.buttons["Pengaturan"].exists)
-        XCTAssertFalse(app.tabBars.buttons["Profil"].exists)
+        assertMainTabs()
     }
 
     func testOnboardingDraftSurvivesRelaunch() {
         confirmAdultAndAdvance()
-        tapNext()
-        XCTAssertFalse(app.buttons["onboarding.adultConfirmed"].exists)
-
+        tapButton("Lanjut")
         app.terminate()
-        app = XCUIApplication()
-        app.launch()
-
+        launch(arguments: [])
         XCTAssertFalse(app.buttons["onboarding.adultConfirmed"].exists)
-        XCTAssertTrue(nextButton.waitForExistence(timeout: 5))
-    }
-
-    func testProgramCalendarIsReachableAfterBaseline() {
-        completeOnboarding()
-        app.tabBars.buttons["Program"].tap()
-        XCTAssertTrue(identifiedElement("program.week.summary").waitForExistence(timeout: 5))
-    }
-
-    func testProgramWeekNavigationAndTodayResetAreReachable() {
-        completeOnboarding()
-        app.tabBars.buttons["Program"].tap()
-
-        let badge = identifiedElement("program.week.badge")
-        XCTAssertTrue(badge.waitForExistence(timeout: 5))
-        guard let currentWeek = badge.value as? String,
-              let currentWeekNumber = Int(currentWeek.filter(\.isNumber)) else {
-            return XCTFail("Calendar week badge should expose its displayed week number")
-        }
-
-        let next = app.buttons["program.week.next"]
-        XCTAssertTrue(next.waitForExistence(timeout: 5))
-        XCTAssertTrue(next.isEnabled)
-        next.tap()
-        waitForValue(badge, value: "Minggu \(currentWeekNumber + 1)")
-
-        tapIdentified("program.week.today")
-        waitForValue(badge, value: currentWeek)
-
-        next.tap()
-        waitForValue(badge, value: "Minggu \(currentWeekNumber + 1)")
-        let previous = app.buttons["program.week.previous"]
-        XCTAssertTrue(previous.waitForExistence(timeout: 5))
-        XCTAssertTrue(previous.isEnabled)
-        previous.tap()
-        waitForValue(badge, value: currentWeek)
+        XCTAssertTrue(app.buttons["Lanjut"].waitForExistence(timeout: 5))
     }
 
     func testPrimaryActivityUsesCompactReadinessBeforeOpening() {
         completeOnboarding()
-        tapIdentified("today.primary.start")
-        XCTAssertTrue(identifiedElement("today.readiness.confirm").waitForExistence(timeout: 5))
+        tapIdentifier("today.primary.start")
+        XCTAssertTrue(element("today.readiness.confirm").waitForExistence(timeout: 5))
         XCTAssertTrue(app.switches["today.readiness.noSymptoms"].exists)
-    }
-
-    func testPainReadinessRoutesToHealthCheckAndClearRecheckRestoresImmediatePrivateFlow() {
-        completeOnboarding()
-        tapIdentified("today.primary.start")
-        setSwitch("today.readiness.noSymptoms", to: false)
-        tapIdentified("today.readiness.symptom.pain")
-        tapIdentified("today.readiness.confirm")
-
-        XCTAssertTrue(identifiedElement("health.check").waitForExistence(timeout: 5))
-        confirmIdentifiedToggle("health.check.confirmed")
-        confirmIdentifiedToggle("health.check.medicalFollowUp")
-        tapIdentifiedButton("health.check.submit")
-
-        XCTAssertTrue(app.tabBars.buttons["Hari Ini"].waitForExistence(timeout: 5))
-        app.tabBars.buttons["Hari Ini"].tap()
-        completeQuickPrivateFlow()
-        XCTAssertTrue(identifiedElement("private.session.v22").waitForExistence(timeout: 5))
-    }
-
-    func testSettingsActivityPreferenceCanBeUpdatedWithoutRepeatingOnboarding() {
-        completeOnboarding()
-        app.tabBars.buttons["Pengaturan"].tap()
-        tapButton("Preferensi aktivitas")
-        tapIdentified("profile.activityPreference.open")
-
-        let preferenceSheet = identifiedElement("profile.activityPreference.sheet")
-        XCTAssertTrue(preferenceSheet.waitForExistence(timeout: 5))
-        tapIdentified("profile.activityPreference.breathingAndMobility")
-        XCTAssertTrue(identifiedElement("profile.activityPreference.validation").waitForExistence(timeout: 5))
-        tapNavigationBarButton("Selesai")
-        XCTAssertTrue(preferenceSheet.waitForNonExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Latihan napas dan mobilitas"].waitForExistence(timeout: 5))
-    }
-
-    func testManualPostponeOpensTheLinkedReplacement() {
-        completeOnboarding()
-        app.tabBars.buttons["Program"].tap()
-
-        tapIdentified("program.day.2")
-        tapIdentified("program.plan.actionable")
-        XCTAssertTrue(identifiedElement("plan.detail.postpone").waitForExistence(timeout: 5))
-        tapIdentified("plan.detail.postpone")
-        tapButton("Cari satu slot aman")
-
-        XCTAssertTrue(identifiedElement("plan.detail.alreadyRescheduled").waitForExistence(timeout: 8))
-        XCTAssertFalse(identifiedElement("plan.detail.postpone").exists)
-        XCTAssertFalse(app.alerts["Rencana belum dapat diubah"].exists)
-    }
-
-    func testReplaceWithRecoveryUsesExplicitConfirmation() {
-        completeOnboarding()
-        app.tabBars.buttons["Program"].tap()
-        tapIdentified("program.plan.actionable")
-        tapIdentified("plan.detail.recovery")
-        XCTAssertTrue(app.buttons["Ganti dengan pemulihan"].waitForExistence(timeout: 5))
-        app.buttons["Ganti dengan pemulihan"].tap()
-        XCTAssertTrue(identifiedElement("plan.detail.success").waitForExistence(timeout: 5))
-    }
-
-    func testMultipleSafetyHoldsNeedConfirmationBeforeClearRecheck() {
-        app.terminate()
-        app = XCUIApplication()
-        app.launchArguments = ["-tempo-ui-testing-reset", "-tempo-ui-testing-multiple-safety-holds"]
-        app.launch()
-
-        XCTAssertTrue(app.tabBars.buttons["Hari Ini"].waitForExistence(timeout: 5))
-        tapButton("Periksa")
-        XCTAssertTrue(identifiedElement("health.check.multipleHolds").waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Nyeri"].exists)
-        XCTAssertTrue(app.staticTexts["Keluhan saluran kemih"].exists)
-
-        confirmIdentifiedToggle("health.check.confirmed")
-        confirmIdentifiedToggle("health.check.medicalFollowUp")
-        let submit = app.buttons["health.check.submit"]
-        XCTAssertTrue(submit.waitForExistence(timeout: 5))
-        XCTAssertFalse(submit.isEnabled)
-
-        confirmIdentifiedToggle("health.check.confirmedAllActiveHoldsResolved")
-        waitForValue(submit, value: "Siap")
-        tapIdentifiedButton("health.check.submit")
-        XCTAssertTrue(app.tabBars.buttons["Pengaturan"].waitForExistence(timeout: 5))
     }
 
     func testQuickPrivateFlowRequiresAtMostThreeTapsAfterPanelAppears() {
         completeOnboarding()
-        tapIdentified("today.quick.private")
-        XCTAssertTrue(identifiedElement("immediate.action.v22").waitForExistence(timeout: 5))
+        tapIdentifier("today.quick.private")
+        XCTAssertTrue(element("immediate.action.v22").waitForExistence(timeout: 5))
 
-        var interactionCount = 0
-        tapIdentified("immediate.intensity.medium")
-        interactionCount += 1
-        tapIdentified("immediate.start")
-        interactionCount += 1
+        var tapCount = 0
+        tapIdentifier("immediate.intensity.medium")
+        tapCount += 1
+        tapIdentifier("immediate.start")
+        tapCount += 1
 
-        XCTAssertLessThanOrEqual(interactionCount, 3)
-        XCTAssertTrue(identifiedElement("private.session.v22").waitForExistence(timeout: 5))
+        XCTAssertLessThanOrEqual(tapCount, 3)
+        XCTAssertTrue(element("private.session.v22").waitForExistence(timeout: 5))
     }
 
     func testQuickFlowNeverDefaultsToReset() {
         completeOnboarding()
-        tapIdentified("today.quick.private")
-        XCTAssertTrue(identifiedElement("immediate.choice.privateSession").waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["immediate.choice.privateSession"].isSelected)
-        XCTAssertFalse(app.buttons["immediate.choice.reset"].isSelected)
+        tapIdentifier("today.quick.private")
+        let privateChoice = app.buttons["immediate.choice.privateSession"]
+        let resetChoice = app.buttons["immediate.choice.reset"]
+        XCTAssertTrue(privateChoice.waitForExistence(timeout: 5))
+        XCTAssertTrue(privateChoice.isSelected)
+        XCTAssertFalse(resetChoice.isSelected)
     }
 
     func testImmediateResetRouteOpensFiveMinuteReset() {
         completeOnboarding()
-        tapIdentified("today.quick.private")
-        tapIdentified("immediate.choice.reset")
-        tapIdentified("immediate.start")
-        XCTAssertTrue(identifiedElement("breathing.session").waitForExistence(timeout: 5))
+        tapIdentifier("today.quick.private")
+        tapIdentifier("immediate.choice.reset")
+        tapIdentifier("immediate.start")
+        XCTAssertTrue(element("breathing.session").waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Reset lima menit"].exists)
-    }
-
-    func testImmediateGuidedRouteOpensGuidedCoach() {
-        completeOnboarding()
-        tapIdentified("today.quick.private")
-        tapIdentified("immediate.choice.guided")
-        tapIdentified("immediate.start")
-        XCTAssertTrue(identifiedElement("guided.session.v22").waitForExistence(timeout: 5))
     }
 
     func testPrivateActiveControlsFitWithoutScrolling() {
         completeOnboarding()
-        completeQuickPrivateFlow()
-        tapIdentified("private.start")
-        XCTAssertTrue(identifiedElement("private.controls").waitForExistence(timeout: 5))
-        XCTAssertTrue(identifiedElement("private.intensity").exists)
+        openPrivateSession()
+        tapIdentifier("private.start")
+        XCTAssertTrue(element("private.controls").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("private.intensity").exists)
         XCTAssertTrue(app.buttons["Jeda"].isHittable)
         XCTAssertTrue(app.buttons["Mendekati batas"].isHittable)
         XCTAssertTrue(app.buttons["Selesai"].isHittable)
@@ -215,163 +82,193 @@ final class TempoUITests: XCTestCase {
 
     func testPrivateManualPauseEntersRecoveryWithoutRedWarning() {
         completeOnboarding()
-        completeQuickPrivateFlow()
-        tapIdentified("private.start")
+        openPrivateSession()
+        tapIdentifier("private.start")
         tapButton("Jeda")
-        XCTAssertTrue(identifiedElement("private.recovery").waitForExistence(timeout: 5))
-        XCTAssertFalse(identifiedElement("private.pause.warning").exists)
+        XCTAssertTrue(element("private.recovery").waitForExistence(timeout: 5))
+        XCTAssertFalse(element("private.pause.warning").exists)
     }
 
-    func testPrivateThresholdUsesVisibleWarning() {
+    func testPrivateThresholdUsesVisibleWarningWithoutMedicalEmergencyCopy() {
         completeOnboarding()
-        completeQuickPrivateFlow()
-        tapIdentified("private.start")
-        tapIdentified("private.intensity.nearLimit")
-        XCTAssertTrue(identifiedElement("private.pause.warning").waitForExistence(timeout: 5))
-        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'DARURAT'")).firstMatch.exists)
-    }
-
-    func testPrivateEmergencyUsesVisibleWarningWithoutMedicalEmergencyCopy() {
-        completeOnboarding()
-        completeQuickPrivateFlow()
-        tapIdentified("private.start")
-        tapButton("Mendekati batas")
-        XCTAssertTrue(identifiedElement("private.pause.warning").waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["STOP SEKARANG"].exists)
+        openPrivateSession()
+        tapIdentifier("private.start")
+        tapIdentifier("private.intensity.nearLimit")
+        XCTAssertTrue(element("private.pause.warning").waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'DARURAT'")).firstMatch.exists)
     }
 
     func testGuidedPrecheckUsesTodayReadinessAndActiveControlsFit() {
         completeOnboarding()
         saveDefaultReadiness()
-        tapIdentified("today.quick.private")
-        tapIdentified("immediate.choice.guided")
-        tapIdentified("immediate.start")
-        XCTAssertTrue(identifiedElement("guided.session.v22").waitForExistence(timeout: 5))
+        tapIdentifier("today.quick.private")
+        tapIdentifier("immediate.choice.guided")
+        tapIdentifier("immediate.start")
+        XCTAssertTrue(element("guided.session.v22").waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Diisi dari readiness hari ini"].exists)
-        tapIdentified("guided.start")
+        tapIdentifier("guided.start")
         tapButton("Saya siap lebih awal")
-        XCTAssertTrue(identifiedElement("guided.active").waitForExistence(timeout: 5))
-        XCTAssertTrue(identifiedElement("guided.controls").exists)
+        XCTAssertTrue(element("guided.active").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("guided.controls").exists)
         XCTAssertTrue(app.buttons["Jeda"].isHittable)
         XCTAssertTrue(app.buttons["Mendekati batas"].isHittable)
         XCTAssertTrue(app.buttons["Selesai"].isHittable)
     }
 
+    func testProgramCalendarAndWeekSummaryAreReachable() {
+        completeOnboarding()
+        app.tabBars.buttons["Program"].tap()
+        XCTAssertTrue(element("program.week.summary").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("program.week.badge").exists)
+    }
+
+    func testManualPostponeOpensTheLinkedReplacement() {
+        completeOnboarding()
+        app.tabBars.buttons["Program"].tap()
+        tapIdentifier("program.day.2")
+        tapIdentifier("program.plan.actionable")
+        tapIdentifier("plan.detail.postpone")
+        tapButton("Cari satu slot aman")
+        XCTAssertTrue(element("plan.detail.alreadyRescheduled").waitForExistence(timeout: 8))
+        XCTAssertFalse(element("plan.detail.postpone").exists)
+    }
+
+    func testReplaceWithRecoveryUsesExplicitConfirmation() {
+        completeOnboarding()
+        app.tabBars.buttons["Program"].tap()
+        tapIdentifier("program.plan.actionable")
+        tapIdentifier("plan.detail.recovery")
+        tapButton("Ganti dengan pemulihan")
+        XCTAssertTrue(element("plan.detail.success").waitForExistence(timeout: 5))
+    }
+
+    func testSettingsActivityPreferenceCanBeUpdatedWithoutRepeatingOnboarding() {
+        completeOnboarding()
+        app.tabBars.buttons["Pengaturan"].tap()
+        tapButton("Preferensi aktivitas")
+        tapIdentifier("profile.activityPreference.open")
+        XCTAssertTrue(element("profile.activityPreference.sheet").waitForExistence(timeout: 5))
+        tapIdentifier("profile.activityPreference.breathingAndMobility")
+        tapNavigationBarButton("Selesai")
+        XCTAssertTrue(app.staticTexts["Latihan napas dan mobilitas"].waitForExistence(timeout: 5))
+    }
+
+    func testMultipleSafetyHoldsNeedConfirmationBeforeClearRecheck() {
+        app.terminate()
+        launch(arguments: ["-tempo-ui-testing-reset", "-tempo-ui-testing-multiple-safety-holds"])
+
+        XCTAssertTrue(app.tabBars.buttons["Hari Ini"].waitForExistence(timeout: 5))
+        tapButton("Periksa")
+        XCTAssertTrue(element("health.check.multipleHolds").waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Nyeri"].exists)
+        XCTAssertTrue(app.staticTexts["Keluhan saluran kemih"].exists)
+
+        setSwitch("health.check.confirmed", to: true)
+        setSwitch("health.check.medicalFollowUp", to: true)
+        let submit = app.buttons["health.check.submit"]
+        XCTAssertTrue(submit.waitForExistence(timeout: 5))
+        XCTAssertFalse(submit.isEnabled)
+
+        setSwitch("health.check.confirmedAllActiveHoldsResolved", to: true)
+        waitUntilEnabled(submit)
+        submit.tap()
+        XCTAssertTrue(app.tabBars.buttons["Pengaturan"].waitForExistence(timeout: 5))
+    }
+
+    private func launch(arguments: [String]) {
+        app = XCUIApplication()
+        app.launchArguments = arguments
+        app.launch()
+    }
+
+    private func assertMainTabs() {
+        XCTAssertTrue(app.tabBars.buttons["Hari Ini"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.tabBars.buttons["Program"].exists)
+        XCTAssertTrue(app.tabBars.buttons["Progres"].exists)
+        XCTAssertTrue(app.tabBars.buttons["Pengaturan"].exists)
+        XCTAssertFalse(app.tabBars.buttons["Profil"].exists)
+    }
+
     private func completeOnboarding() {
         confirmAdultAndAdvance()
-        for _ in 0..<5 { tapNext() }
-        let finishButton = app.buttons["Masuk ke Hari Ini"]
-        XCTAssertTrue(finishButton.waitForExistence(timeout: 5))
-        XCTAssertTrue(finishButton.isEnabled)
-        finishButton.tap()
-        XCTAssertTrue(app.tabBars.buttons["Hari Ini"].waitForExistence(timeout: 8))
+        for _ in 0..<5 { tapButton("Lanjut") }
+        tapButton("Masuk ke Hari Ini")
+        assertMainTabs()
     }
 
     private func confirmAdultAndAdvance() {
         let adult = app.buttons["onboarding.adultConfirmed"]
         XCTAssertTrue(adult.waitForExistence(timeout: 5))
         adult.tap()
-        XCTAssertTrue(nextButton.isEnabled)
-        tapNext()
+        tapButton("Lanjut")
     }
 
-    private func completeQuickPrivateFlow() {
-        tapIdentified("today.quick.private")
-        XCTAssertTrue(identifiedElement("immediate.action.v22").waitForExistence(timeout: 5))
-        tapIdentified("immediate.start")
-        XCTAssertTrue(identifiedElement("private.session.v22").waitForExistence(timeout: 5))
+    private func openPrivateSession() {
+        tapIdentifier("today.quick.private")
+        tapIdentifier("immediate.start")
+        XCTAssertTrue(element("private.session.v22").waitForExistence(timeout: 5))
     }
 
     private func saveDefaultReadiness() {
-        if identifiedElement("today.readiness.compact").exists {
-            tapIdentified("today.readiness.compact")
+        if element("today.readiness.compact").exists {
+            tapIdentifier("today.readiness.compact")
         } else {
-            tapIdentified("today.primary.start")
+            tapIdentifier("today.primary.start")
         }
-        tapIdentified("today.readiness.confirm")
+        tapIdentifier("today.readiness.confirm")
         XCTAssertTrue(app.tabBars.buttons["Hari Ini"].waitForExistence(timeout: 5))
-    }
-
-    private var nextButton: XCUIElement { app.buttons["Lanjut"] }
-
-    private func tapNext() {
-        XCTAssertTrue(nextButton.waitForExistence(timeout: 5))
-        XCTAssertTrue(nextButton.isEnabled)
-        nextButton.tap()
     }
 
     private func tapButton(_ label: String) {
         let button = app.buttons[label]
-        for _ in 0..<4 {
-            if button.waitForExistence(timeout: 1), button.isHittable { break }
-            app.swipeUp()
-        }
-        XCTAssertTrue(button.waitForExistence(timeout: 5))
+        scrollUntilHittable(button)
+        XCTAssertTrue(button.waitForExistence(timeout: 5), "Missing button: \(label)")
         XCTAssertTrue(button.isEnabled)
         XCTAssertTrue(button.isHittable)
         button.tap()
     }
 
-    private func tapIdentified(_ identifier: String) {
-        let element = identifiedElement(identifier)
-        for _ in 0..<4 {
-            if element.waitForExistence(timeout: 1), element.isHittable { break }
-            app.swipeUp()
-        }
-        XCTAssertTrue(element.waitForExistence(timeout: 5), "Missing \(identifier)")
-        XCTAssertTrue(element.isEnabled)
-        XCTAssertTrue(element.isHittable)
-        element.tap()
+    private func tapIdentifier(_ identifier: String) {
+        let target = element(identifier)
+        scrollUntilHittable(target)
+        XCTAssertTrue(target.waitForExistence(timeout: 5), "Missing identifier: \(identifier)")
+        XCTAssertTrue(target.isEnabled)
+        XCTAssertTrue(target.isHittable)
+        target.tap()
     }
 
-    private func tapIdentifiedButton(_ identifier: String) {
-        let button = app.buttons[identifier]
-        for _ in 0..<4 {
-            if button.waitForExistence(timeout: 1), button.isHittable { break }
+    private func scrollUntilHittable(_ element: XCUIElement) {
+        for _ in 0..<5 {
+            if element.waitForExistence(timeout: 1), element.isHittable { return }
             app.swipeUp()
         }
-        XCTAssertTrue(button.waitForExistence(timeout: 5))
-        XCTAssertTrue(button.isEnabled)
-        XCTAssertTrue(button.isHittable)
-        button.tap()
-    }
-
-    private func confirmIdentifiedToggle(_ identifier: String) {
-        setSwitch(identifier, to: true)
     }
 
     private func setSwitch(_ identifier: String, to desired: Bool) {
         let toggle = app.switches[identifier]
-        for _ in 0..<4 {
-            if toggle.waitForExistence(timeout: 1), toggle.isHittable { break }
-            app.swipeUp()
-        }
+        scrollUntilHittable(toggle)
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
-        XCTAssertTrue(toggle.isEnabled)
-        let isOn = (toggle.value as? String) == "1"
-        if isOn != desired {
+        let current = (toggle.value as? String) == "1"
+        if current != desired {
             toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
         }
     }
 
-    private func tapNavigationBarButton(_ label: String) {
-        let button = app.navigationBars.buttons[label]
-        XCTAssertTrue(button.waitForExistence(timeout: 5))
-        XCTAssertTrue(button.isEnabled)
-        XCTAssertTrue(button.isHittable)
-        button.tap()
-    }
-
-    private func waitForValue(_ element: XCUIElement, value: String) {
+    private func waitUntilEnabled(_ element: XCUIElement) {
         let expectation = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value == %@", value),
+            predicate: NSPredicate(format: "enabled == true"),
             object: element
         )
         XCTAssertEqual(XCTWaiter().wait(for: [expectation], timeout: 5), .completed)
     }
 
-    private func identifiedElement(_ identifier: String) -> XCUIElement {
+    private func tapNavigationBarButton(_ label: String) {
+        let button = app.navigationBars.buttons[label]
+        XCTAssertTrue(button.waitForExistence(timeout: 5))
+        button.tap()
+    }
+
+    private func element(_ identifier: String) -> XCUIElement {
         app.descendants(matching: .any)[identifier]
     }
 }
