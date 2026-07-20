@@ -6,9 +6,10 @@ extension ActivityPreference {
     static var breathingMobility: ActivityPreference { .breathingAndMobility }
 }
 
-/// Shared formatter for the new private and guided session presentations.
-/// It is intentionally separate from the old file-private helpers.
-func tempoV22Duration(_ seconds: Int) -> String {
-    let safe = max(0, seconds)
+/// Shared formatter for V22 screens that do not already own a file-private
+/// formatter. The generic signature intentionally avoids redeclaring the
+/// existing private `(Int) -> String` helper in the private-session file.
+func tempoV22Duration<T: BinaryInteger>(_ seconds: T) -> String {
+    let safe = max(0, Int(seconds))
     return "\(safe / 60):\(String(format: "%02d", safe % 60))"
 }
