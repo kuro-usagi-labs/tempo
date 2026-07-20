@@ -66,7 +66,8 @@ struct TempoV2AppShell: View {
                             TempoProgressScreen().tag(TempoTab.progress)
                                 .tabItem { Label("Progres", systemImage: "chart.line.uptrend.xyaxis") }
                             TempoProfileScreen().tag(TempoTab.profile)
-                                .tabItem { Label("Profil", systemImage: "person.crop.circle") }
+                                .tabItem { Label("Pengaturan", systemImage: "gearshape.fill") }
+                                .accessibilityLabel("Pengaturan")
                         }
                         .tint(TempoDesign.Palette.accent)
                         .navigationDestination(for: TempoRoute.self) { TempoRouteDestination(route: $0) }
@@ -153,7 +154,14 @@ struct TempoV2AppShell: View {
             isUnlocked = true
         }
         if remindersEnabled {
-            Task { await LocalNotifications.requestAndSyncPlan(history.upcomingPlan, fallbackHour: reminderHour, windowEndHour: history.baseline?.reminderEndHour ?? 21, soundEnabled: notificationSoundsEnabled) }
+            Task {
+                await LocalNotifications.requestAndSyncPlan(
+                    history.upcomingPlan,
+                    fallbackHour: reminderHour,
+                    windowEndHour: history.baseline?.reminderEndHour ?? 21,
+                    soundEnabled: notificationSoundsEnabled
+                )
+            }
         }
     }
 }
@@ -165,7 +173,7 @@ struct TempoRouteDestination: View {
     var body: some View {
         switch route {
         case let .plan(id): TempoPlanDetailScreen(planID: id)
-        case let .immediateAction(initialIntensity): TempoImmediateActionScreen(initialIntensity: initialIntensity)
+        case let .immediateAction(initialIntensity): TempoImmediateActionSheetScreen(initialIntensity: initialIntensity)
         case let .guided(id): TempoGuidedSessionScreen(plannedDayID: id)
         case let .privateSession(advisories): TempoPrivateSessionTimerScreen(advisories: advisories)
         case let .guidedUnavailable(reason, message, nextAvailableAt):
