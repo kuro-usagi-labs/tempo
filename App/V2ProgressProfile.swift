@@ -477,7 +477,7 @@ struct TempoHealthCheckScreen: View {
                 Button(hasSymptoms ? "Simpan dan jeda latihan" : "Konfirmasi tidak ada gejala") { save() }
                     .disabled(!canSubmit)
                     .accessibilityIdentifier("health.check.submit")
-                    .accessibilityValue(canSubmit ? "Siap" : "Belum siap")
+                    .accessibilityValue(submitAccessibilityValue)
             }
         }
         .navigationTitle("Pemeriksaan")
@@ -499,6 +499,11 @@ struct TempoHealthCheckScreen: View {
         if requiresMedicalResolutionConfirmation && !confirmedMedicalFollowUp { return false }
         if history.requiresMultipleHoldConfirmation && !confirmedAllActiveHoldsResolved { return false }
         return true
+    }
+
+    private var submitAccessibilityValue: String {
+        if canSubmit { return "Siap" }
+        return "Belum siap; lengkap \(confirmedComplete); medis \(confirmedMedicalFollowUp); semua \(confirmedAllActiveHoldsResolved); masa recheck \(history.canResolveActiveSafetyHold)"
     }
 
     private func activeHoldReason(_ code: String) -> String {

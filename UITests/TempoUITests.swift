@@ -173,7 +173,9 @@ final class TempoUITests: XCTestCase {
 
         confirmIdentifiedToggle("health.check.confirmedAllActiveHoldsResolved")
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Siap"), object: submit)
-        XCTAssertEqual(XCTWaiter().wait(for: [ready], timeout: 5), .completed)
+        if XCTWaiter().wait(for: [ready], timeout: 5) != .completed {
+            XCTFail("Unexpected submit state: \(String(describing: submit.value))")
+        }
         tapIdentifiedButton("health.check.submit")
         let safetyStatus = app.staticTexts["profile.safety.status"]
         XCTAssertTrue(safetyStatus.waitForExistence(timeout: 5))
