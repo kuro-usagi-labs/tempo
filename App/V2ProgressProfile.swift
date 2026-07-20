@@ -503,7 +503,7 @@ struct TempoHealthCheckScreen: View {
 
     private var submitAccessibilityValue: String {
         if canSubmit { return "Siap" }
-        return "Belum siap; lengkap \(confirmedComplete); medis \(confirmedMedicalFollowUp); semua \(confirmedAllActiveHoldsResolved); masa recheck \(history.canResolveActiveSafetyHold)"
+        return "Belum siap. Lengkapi semua konfirmasi yang diperlukan."
     }
 
     private func activeHoldReason(_ code: String) -> String {
