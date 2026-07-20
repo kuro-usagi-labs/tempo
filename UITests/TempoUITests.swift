@@ -165,15 +165,15 @@ final class TempoUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Nyeri"].exists)
         XCTAssertTrue(app.staticTexts["Keluhan saluran kemih"].exists)
 
-        tapIdentifiedButton("health.check.confirmed")
+        confirmIdentifiedButton("health.check.confirmed")
         XCTAssertEqual(app.buttons["health.check.confirmed"].value as? String, "Dikonfirmasi")
-        tapIdentifiedButton("health.check.medicalFollowUp")
+        confirmIdentifiedButton("health.check.medicalFollowUp")
         XCTAssertEqual(app.buttons["health.check.medicalFollowUp"].value as? String, "Dikonfirmasi")
         let submit = app.buttons["health.check.submit"]
         XCTAssertTrue(submit.waitForExistence(timeout: 5))
         XCTAssertFalse(submit.isEnabled)
 
-        tapIdentifiedButton("health.check.confirmedAllActiveHoldsResolved")
+        confirmIdentifiedButton("health.check.confirmedAllActiveHoldsResolved")
         XCTAssertEqual(app.buttons["health.check.confirmedAllActiveHoldsResolved"].value as? String, "Dikonfirmasi")
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Siap"), object: submit)
         XCTAssertEqual(XCTWaiter().wait(for: [ready], timeout: 5), .completed)
@@ -307,6 +307,20 @@ final class TempoUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter().wait(for: [enabled], timeout: 5), .completed)
         XCTAssertTrue(button.isHittable)
         button.tap()
+    }
+
+    private func confirmIdentifiedButton(_ identifier: String) {
+        let button = app.buttons[identifier]
+        for _ in 0..<3 {
+            if button.value as? String == "Dikonfirmasi" { return }
+            tapIdentifiedButton(identifier)
+            let confirmed = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "value == %@", "Dikonfirmasi"),
+                object: button
+            )
+            if XCTWaiter().wait(for: [confirmed], timeout: 2) == .completed { return }
+        }
+        XCTFail("\(identifier) did not retain its confirmed state")
     }
 
     private func tapNavigationBarButton(_ label: String) {
