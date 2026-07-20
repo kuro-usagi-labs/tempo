@@ -63,13 +63,13 @@ struct TempoOnboardingDraft: Codable, Equatable {
     var reminderEndHour = 21
 
     var safetyAnswers: SafetyScreeningAnswers {
-        SafetyScreeningAnswers(
-            severeOrPelvicPain: severeOrPelvicPain,
-            bloodOrFever: bloodOrFever,
-            urinaryOrDischarge: urinaryOrDischarge,
-            acuteInjury: acuteInjury,
-            mildIrritation: mildIrritation
-        )
+        var answers = SafetyScreeningAnswers()
+        answers.severeOrPelvicPain = severeOrPelvicPain
+        answers.bloodOrFever = bloodOrFever
+        answers.urinaryOrDischarge = urinaryOrDischarge
+        answers.acuteInjury = acuteInjury
+        answers.mildIrritation = mildIrritation
+        return answers
     }
 
     mutating func apply(_ answers: SafetyScreeningAnswers) {
@@ -78,22 +78,6 @@ struct TempoOnboardingDraft: Codable, Equatable {
         urinaryOrDischarge = answers.urinaryOrDischarge
         acuteInjury = answers.acuteInjury
         mildIrritation = answers.mildIrritation
-    }
-}
-
-extension SafetyScreeningAnswers {
-    init(
-        severeOrPelvicPain: Bool,
-        bloodOrFever: Bool,
-        urinaryOrDischarge: Bool,
-        acuteInjury: Bool,
-        mildIrritation: Bool
-    ) {
-        self.severeOrPelvicPain = severeOrPelvicPain
-        self.bloodOrFever = bloodOrFever
-        self.urinaryOrDischarge = urinaryOrDischarge
-        self.acuteInjury = acuteInjury
-        self.mildIrritation = mildIrritation
     }
 }
 
@@ -117,8 +101,8 @@ enum TempoOnboardingDraftStore {
     }
 }
 
-/// Seven-step onboarding backed by a durable local draft. It uses the real
-/// baseline model and `WeeklyPlanGenerator`, so the final preview is never mock.
+/// Seven-step onboarding backed by a durable local draft. The preview and
+/// final plan use the production `WeeklyPlanGenerator`, never mock rows.
 struct TempoV22Onboarding: View {
     @Environment(LocalHistory.self) private var history
     @Environment(\.scenePhase) private var scenePhase
@@ -128,6 +112,7 @@ struct TempoV22Onboarding: View {
     @AppStorage("dailyPlanReminderHour") private var reminderHour = 19
 
     @State private var draft = TempoOnboardingDraftStore.load() ?? TempoOnboardingDraft()
+    @State private var reminderDisclosureExpanded = false
     @State private var saving = false
     @State private var saveFailed = false
 
@@ -143,12 +128,13 @@ struct TempoV22Onboarding: View {
         .safeAreaInset(edge: .bottom) {
             TempoStickyActionBar { controls }
         }
-        .onAppear { restoreAppStorageFromDraft() }
+        .onAppear {
+            discreetTerminology = draft.discreetTerminology
+            reminderDisclosureExpanded = draft.remindersEnabled
+        }
         .onChange(of: draft) { _, value in
             _ = TempoOnboardingDraftStore.save(value)
             discreetTerminology = value.discreetTerminology
-            remindersEnabled = value.remindersEnabled
-            reminderHour = value.reminderHour
         }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { _ = TempoOnboardingDraftStore.save(draft) }
@@ -157,7 +143,7 @@ struct TempoV22Onboarding: View {
             Button("Coba lagi") { finish() }
             Button("Tetap di sini", role: .cancel) {}
         } message: {
-            Text("TEMPO tetap menyimpan draft onboarding dan tidak masuk ke Hari Ini sampai baseline lokal berhasil disimpan.")
+            Text("Draft tetap tersimpan. TEMPO tidak masuk ke Hari Ini sampai baseline dan plan lokal berhasil dibuat.")
         }
         .accessibilityIdentifier("onboarding.v22")
     }
@@ -173,10 +159,12 @@ struct TempoV22Onboarding: View {
                 Text("\(draft.step + 1) / \(totalSteps)")
                     .font(TempoDesign.Typography.caption)
                     .foregroundStyle(TempoDesign.Palette.textSecondary)
+                    .accessibilityIdentifier("onboarding.progress")
             }
             ProgressView(value: Double(draft.step + 1), total: Double(totalSteps))
                 .tint(TempoDesign.Palette.accent)
                 .accessibilityLabel("Kemajuan onboarding")
+                .accessibilityValue("Tahap \(draft.step + 1) dari \(totalSteps)")
         }
     }
 
@@ -216,6 +204,8 @@ struct TempoV22Onboarding: View {
                         .frame(minHeight: 48)
                     }
                     .buttonStyle(TempoTactileButtonStyle())
+                    .accessibilityValue(draft.adultConfirmed ? "Dikonfirmasi" : "Belum dikonfirmasi")
+                    .accessibilityAddTraits(draft.adultConfirmed ? .isSelected : [])
                     .accessibilityIdentifier("onboarding.adultConfirmed")
                     Toggle("Gunakan istilah yang lebih privat", isOn: $draft.discreetTerminology)
                         .tint(TempoDesign.Palette.accent)
@@ -229,8 +219,7 @@ struct TempoV22Onboarding: View {
 
     private var goalAndControl: some View {
         VStack(alignment: .leading, spacing: TempoDesign.Spacing.lg) {
-            Text("Tujuan dan kondisi awal")
-                .font(TempoDesign.Typography.pageTitle)
+            pageHeading("Tujuan dan kondisi awal", detail: "Jawaban ini memilih bahasa dan tempo awal, bukan memberi label.")
             selectionGroup(
                 title: "Apa yang ingin kamu benahi?",
                 options: ["Kontrol dan jeda", "Kecemasan atau stres", "Keduanya"],
@@ -252,8 +241,7 @@ struct TempoV22Onboarding: View {
 
     private var baselineCondition: some View {
         VStack(alignment: .leading, spacing: TempoDesign.Spacing.lg) {
-            Text("Kondisi dasar")
-                .font(TempoDesign.Typography.pageTitle)
+            pageHeading("Kondisi dasar", detail: "Baseline adalah titik awal. Check-in harian tetap memiliki prioritas untuk hari tersebut.")
             scaleCard(
                 title: "Kecemasan akhir-akhir ini",
                 value: $draft.anxiety,
@@ -268,7 +256,10 @@ struct TempoV22Onboarding: View {
                         Text("\(draft.sleepHours) jam").font(TempoDesign.Typography.numeric)
                     }
                     Slider(
-                        value: Binding(get: { Double(draft.sleepHours) }, set: { draft.sleepHours = Int($0.rounded()) }),
+                        value: Binding(
+                            get: { Double(draft.sleepHours) },
+                            set: { draft.sleepHours = Int($0.rounded()) }
+                        ),
                         in: 3...12,
                         step: 1
                     )
@@ -280,8 +271,7 @@ struct TempoV22Onboarding: View {
 
     private var realisticActivity: some View {
         VStack(alignment: .leading, spacing: TempoDesign.Spacing.lg) {
-            Text("Aktivitas yang realistis")
-                .font(TempoDesign.Typography.pageTitle)
+            pageHeading("Aktivitas yang realistis", detail: "Pilih kebiasaan yang benar-benar mungkin dilakukan, bukan target ideal.")
             VStack(spacing: TempoDesign.Spacing.sm) {
                 ForEach(TempoMovementFrequency.allCases) { frequency in
                     TempoSelectionCard(
@@ -305,7 +295,7 @@ struct TempoV22Onboarding: View {
             }
             VStack(alignment: .leading, spacing: TempoDesign.Spacing.sm) {
                 Text("Preferensi aktivitas").font(TempoDesign.Typography.sectionTitle)
-                Text("Preferensi bukan target. Safety dan pemulihan tetap memiliki prioritas.")
+                Text("Preferensi bukan target dan tidak mengalahkan safety atau recovery.")
                     .font(TempoDesign.Typography.supporting)
                     .foregroundStyle(TempoDesign.Palette.textSecondary)
                 ForEach(ActivityPreference.allCases, id: \.self) { preference in
@@ -316,9 +306,8 @@ struct TempoV22Onboarding: View {
                         selected: draft.activityPreference == preference,
                         tone: .accent
                     ) {
-                        if activityPreferenceAllowed(preference) {
-                            draft.activityPreference = preference
-                        }
+                        guard activityPreferenceAllowed(preference) else { return }
+                        draft.activityPreference = preference
                     }
                     .opacity(activityPreferenceAllowed(preference) ? 1 : 0.55)
                     .accessibilityIdentifier("onboarding.activityPreference.\(preference.rawValue)")
@@ -329,10 +318,7 @@ struct TempoV22Onboarding: View {
 
     private var habitContext: some View {
         VStack(alignment: .leading, spacing: TempoDesign.Spacing.lg) {
-            Text("Konteks kebiasaan")
-                .font(TempoDesign.Typography.pageTitle)
-            Text("Jawaban ini mengubah tempo awal dan jenis materi, bukan memberi label pada dirimu.")
-                .foregroundStyle(TempoDesign.Palette.textSecondary)
+            pageHeading("Konteks kebiasaan", detail: "Jawaban ini mengubah preparation, materi awal, dan pilihan aktivitas.")
             TempoSurfaceCard {
                 VStack(alignment: .leading, spacing: TempoDesign.Spacing.md) {
                     Toggle("Saya biasanya punya ruang yang aman dan privat", isOn: $draft.safeSpace)
@@ -348,23 +334,38 @@ struct TempoV22Onboarding: View {
 
     private var safetyAndReminder: some View {
         VStack(alignment: .leading, spacing: TempoDesign.Spacing.lg) {
-            Text("Keselamatan dan pengingat")
-                .font(TempoDesign.Typography.pageTitle)
-            TempoDisclosureSection(title: "Pemeriksaan singkat", icon: "cross.case.fill", isExpanded: .constant(true)) {
-                VStack(alignment: .leading, spacing: TempoDesign.Spacing.sm) {
-                    Text("Centang hanya bila terjadi sekarang atau baru-baru ini. TEMPO akan menjeda sesi dan menampilkan langkah aman.")
-                        .font(TempoDesign.Typography.supporting)
-                        .foregroundStyle(TempoDesign.Palette.textSecondary)
-                    SafetyScreeningFields(answers: safetyBinding)
-                }
+            pageHeading("Keselamatan dan pengingat", detail: "Safety screening selalu tersimpan bersama baseline. Pengingat tetap opsional.")
+            VStack(alignment: .leading, spacing: TempoDesign.Spacing.sm) {
+                Label("Pemeriksaan singkat", systemImage: "cross.case.fill")
+                    .font(TempoDesign.Typography.sectionTitle)
+                    .foregroundStyle(TempoDesign.Palette.caution)
+                Text("Centang hanya bila terjadi sekarang atau baru-baru ini. TEMPO akan menjeda sesi dan menampilkan langkah aman.")
+                    .font(TempoDesign.Typography.supporting)
+                    .foregroundStyle(TempoDesign.Palette.textSecondary)
+                SafetyScreeningFields(answers: safetyBinding)
             }
-            TempoDisclosureSection(title: "Pengingat lokal", icon: "bell.fill", isExpanded: $draft.remindersEnabled) {
+            .padding(TempoDesign.Spacing.md)
+            .background(TempoDesign.Palette.caution.opacity(0.08), in: RoundedRectangle(cornerRadius: TempoDesign.Radius.medium))
+
+            TempoDisclosureSection(
+                title: "Pengingat lokal",
+                icon: "bell.fill",
+                isExpanded: $reminderDisclosureExpanded
+            ) {
                 VStack(alignment: .leading, spacing: TempoDesign.Spacing.sm) {
                     Toggle("Aktifkan pengingat rencana", isOn: $draft.remindersEnabled)
                         .tint(TempoDesign.Palette.accent)
                     if draft.remindersEnabled {
-                        Stepper("Jam pengingat: \(String(format: "%02d:00", draft.reminderHour))", value: $draft.reminderHour, in: 8...21)
-                        Stepper("Akhiri setelah: \(String(format: "%02d:00", draft.reminderEndHour))", value: $draft.reminderEndHour, in: draft.reminderHour...22)
+                        Stepper(
+                            "Jam pengingat: \(String(format: "%02d:00", draft.reminderHour))",
+                            value: $draft.reminderHour,
+                            in: 8...21
+                        )
+                        Stepper(
+                            "Akhiri setelah: \(String(format: "%02d:00", draft.reminderEndHour))",
+                            value: $draft.reminderEndHour,
+                            in: draft.reminderHour...22
+                        )
                     }
                 }
             }
@@ -373,10 +374,7 @@ struct TempoV22Onboarding: View {
 
     private var preview: some View {
         VStack(alignment: .leading, spacing: TempoDesign.Spacing.lg) {
-            Text("Minggu pertamamu")
-                .font(TempoDesign.Typography.pageTitle)
-            Text("Preview dihitung langsung dari baseline draft dan generator program yang sama dengan aplikasi.")
-                .foregroundStyle(TempoDesign.Palette.textSecondary)
+            pageHeading("Minggu pertamamu", detail: "Preview dihitung langsung dari draft menggunakan generator program produksi.")
             ForEach(previewItems) { item in
                 TempoCompactStatusRow(
                     title: item.scheduledAt.formatted(.dateTime.weekday(.wide)),
@@ -388,6 +386,7 @@ struct TempoV22Onboarding: View {
                 .background(TempoDesign.Palette.surface, in: RoundedRectangle(cornerRadius: TempoDesign.Radius.small))
             }
         }
+        .accessibilityIdentifier("onboarding.preview")
     }
 
     private var controls: some View {
@@ -398,7 +397,11 @@ struct TempoV22Onboarding: View {
                 }
             }
             if draft.step == totalSteps - 1 {
-                TempoPrimaryButton(saving ? "Menyimpan…" : "Masuk ke Hari Ini", icon: "arrow.right", isEnabled: !saving) {
+                TempoPrimaryButton(
+                    saving ? "Menyimpan…" : "Masuk ke Hari Ini",
+                    icon: "arrow.right",
+                    isEnabled: !saving
+                ) {
                     finish()
                 }
                 .accessibilityIdentifier("onboarding.finish")
@@ -438,12 +441,28 @@ struct TempoV22Onboarding: View {
             rushedHabit: draft.rushedHabit,
             highStimulusPattern: draft.highStimulus,
             hasSafetyHold: draft.safetyAnswers.hasAny,
+            perceivedControl: draft.control,
+            weeklyMovementMinutes: draft.movementFrequency.weeklyMinutes,
+            activityLevel: draft.movementFrequency == .rarely ? "Jarang" : "Aktif",
             preferredActivity: draft.activityPreference.legacyDisplayValue,
             activityPreference: draft.activityPreference
         )
     }
 
-    private func selectionGroup(title: String, options: [String], selection: Binding<String>) -> some View {
+    private func pageHeading(_ title: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: TempoDesign.Spacing.xs) {
+            Text(title).font(TempoDesign.Typography.pageTitle)
+            Text(detail)
+                .font(TempoDesign.Typography.supporting)
+                .foregroundStyle(TempoDesign.Palette.textSecondary)
+        }
+    }
+
+    private func selectionGroup(
+        title: String,
+        options: [String],
+        selection: Binding<String>
+    ) -> some View {
         VStack(alignment: .leading, spacing: TempoDesign.Spacing.sm) {
             Text(title).font(TempoDesign.Typography.sectionTitle)
             ForEach(options, id: \.self) { option in
@@ -460,7 +479,12 @@ struct TempoV22Onboarding: View {
         }
     }
 
-    private func scaleCard(title: String, value: Binding<Int>, lower: String, upper: String) -> some View {
+    private func scaleCard(
+        title: String,
+        value: Binding<Int>,
+        lower: String,
+        upper: String
+    ) -> some View {
         TempoSurfaceCard(tint: TempoDesign.Palette.accent, emphasis: .tinted) {
             VStack(alignment: .leading, spacing: TempoDesign.Spacing.md) {
                 Text(title).font(TempoDesign.Typography.sectionTitle)
@@ -472,7 +496,10 @@ struct TempoV22Onboarding: View {
                     Text(upper).font(TempoDesign.Typography.caption)
                 }
                 Slider(
-                    value: Binding(get: { Double(value.wrappedValue) }, set: { value.wrappedValue = Int($0.rounded()) }),
+                    value: Binding(
+                        get: { Double(value.wrappedValue) },
+                        set: { value.wrappedValue = Int($0.rounded()) }
+                    ),
                     in: 1...10,
                     step: 1
                 )
@@ -487,7 +514,7 @@ struct TempoV22Onboarding: View {
             return draft.canWalk && !draft.exerciseRestricted
         case .homeStrength:
             return draft.safeSpace && !draft.exerciseRestricted
-        default:
+        case .walking, .breathingAndMobility, .noPreference:
             return true
         }
     }
@@ -495,9 +522,12 @@ struct TempoV22Onboarding: View {
     private func activityPreferenceAvailability(_ preference: ActivityPreference) -> String? {
         guard !activityPreferenceAllowed(preference) else { return nil }
         switch preference {
-        case .walkJog: return "Memerlukan kemampuan jalan 20 menit tanpa pembatasan aktivitas."
-        case .homeStrength: return "Memerlukan ruang aman dan tanpa pembatasan aktivitas."
-        default: return nil
+        case .walkJog:
+            return "Memerlukan kemampuan jalan 20 menit tanpa pembatasan aktivitas."
+        case .homeStrength:
+            return "Memerlukan ruang aman dan tanpa pembatasan aktivitas."
+        case .walking, .breathingAndMobility, .noPreference:
+            return nil
         }
     }
 
@@ -506,15 +536,9 @@ struct TempoV22Onboarding: View {
         case .walking: "figure.walk"
         case .walkJog: "figure.run"
         case .homeStrength: "figure.strengthtraining.traditional"
-        case .breathingMobility: "wind"
+        case .breathingAndMobility: "wind"
         case .noPreference: "slider.horizontal.3"
         }
-    }
-
-    private func restoreAppStorageFromDraft() {
-        discreetTerminology = draft.discreetTerminology
-        remindersEnabled = draft.remindersEnabled
-        reminderHour = draft.reminderHour
     }
 
     private func finish() {
