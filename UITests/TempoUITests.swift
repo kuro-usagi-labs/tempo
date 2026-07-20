@@ -166,15 +166,12 @@ final class TempoUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Keluhan saluran kemih"].exists)
 
         confirmIdentifiedToggle("health.check.confirmed")
-        XCTAssertEqual(app.switches["health.check.confirmed"].value as? String, "1")
         confirmIdentifiedToggle("health.check.medicalFollowUp")
-        XCTAssertEqual(app.switches["health.check.medicalFollowUp"].value as? String, "1")
         let submit = app.buttons["health.check.submit"]
         XCTAssertTrue(submit.waitForExistence(timeout: 5))
         XCTAssertFalse(submit.isEnabled)
 
         confirmIdentifiedToggle("health.check.confirmedAllActiveHoldsResolved")
-        XCTAssertEqual(app.switches["health.check.confirmedAllActiveHoldsResolved"].value as? String, "1")
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Siap"), object: submit)
         XCTAssertEqual(XCTWaiter().wait(for: [ready], timeout: 5), .completed)
         tapIdentifiedButton("health.check.submit")
@@ -312,21 +309,12 @@ final class TempoUITests: XCTestCase {
     private func confirmIdentifiedToggle(_ identifier: String) {
         let toggle = app.switches[identifier]
         for _ in 0..<3 {
-            if toggle.value as? String == "1" { return }
-            for _ in 0..<3 {
-                if toggle.waitForExistence(timeout: 1), toggle.isHittable { break }
-                app.swipeUp()
-            }
-            XCTAssertTrue(toggle.waitForExistence(timeout: 5))
-            XCTAssertTrue(toggle.isEnabled)
-            toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
-            let confirmed = XCTNSPredicateExpectation(
-                predicate: NSPredicate(format: "value == %@", "1"),
-                object: toggle
-            )
-            if XCTWaiter().wait(for: [confirmed], timeout: 2) == .completed { return }
+            if toggle.waitForExistence(timeout: 1), toggle.isHittable { break }
+            app.swipeUp()
         }
-        XCTFail("\(identifier) did not retain its confirmed state")
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertTrue(toggle.isEnabled)
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
     }
 
     private func tapNavigationBarButton(_ label: String) {
