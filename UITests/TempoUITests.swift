@@ -106,8 +106,8 @@ final class TempoUITests: XCTestCase {
         tapIdentified("today.readiness.save")
 
         XCTAssertTrue(identifiedElement("health.check").waitForExistence(timeout: 5))
-        tapIdentifiedButton("health.check.confirmed")
-        tapIdentifiedButton("health.check.medicalFollowUp")
+        confirmIdentifiedToggle("health.check.confirmed")
+        confirmIdentifiedToggle("health.check.medicalFollowUp")
         tapIdentifiedButton("health.check.submit")
 
         XCTAssertTrue(app.tabBars.buttons["Hari Ini"].waitForExistence(timeout: 5))
@@ -137,10 +137,49 @@ final class TempoUITests: XCTestCase {
         completeOnboarding()
         app.tabBars.buttons["Program"].tap()
 
+        tapIdentified("program.day.2")
         tapIdentified("program.plan.actionable")
         XCTAssertTrue(identifiedElement("plan.detail.postpone").waitForExistence(timeout: 5))
         tapIdentified("plan.detail.postpone")
         XCTAssertTrue(identifiedElement("plan.detail.replacement").waitForExistence(timeout: 5))
+        XCTAssertTrue(identifiedElement("plan.detail.alreadyRescheduled").waitForExistence(timeout: 5))
+        XCTAssertFalse(identifiedElement("plan.detail.postpone").exists)
+        XCTAssertFalse(app.alerts["Rencana belum dapat diubah"].exists)
+
+        let backButton = app.navigationBars.buttons.element(boundBy: 0)
+        XCTAssertTrue(backButton.waitForExistence(timeout: 5))
+        backButton.tap()
+        XCTAssertTrue(identifiedElement("program.plan.postponedSource").waitForExistence(timeout: 5))
+    }
+
+    func testMultipleSafetyHoldsNeedConfirmationBeforeClearRecheck() {
+        app.terminate()
+        app = XCUIApplication()
+        app.launchArguments = ["-tempo-ui-testing-reset", "-tempo-ui-testing-multiple-safety-holds"]
+        app.launch()
+
+        XCTAssertTrue(app.tabBars.buttons["Profil"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["Profil"].tap()
+        tapIdentified("profile.safety.open")
+        XCTAssertTrue(identifiedElement("health.check.multipleHolds").waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Nyeri"].exists)
+        XCTAssertTrue(app.staticTexts["Keluhan saluran kemih"].exists)
+
+        confirmIdentifiedToggle("health.check.confirmed")
+        confirmIdentifiedToggle("health.check.medicalFollowUp")
+        let submit = app.buttons["health.check.submit"]
+        XCTAssertTrue(submit.waitForExistence(timeout: 5))
+        XCTAssertFalse(submit.isEnabled)
+
+        confirmIdentifiedToggle("health.check.confirmedAllActiveHoldsResolved")
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Siap"), object: submit)
+        if XCTWaiter().wait(for: [ready], timeout: 5) != .completed {
+            XCTFail("Unexpected submit state: \(String(describing: submit.value))")
+        }
+        tapIdentifiedButton("health.check.submit")
+        let safetyStatus = app.staticTexts["profile.safety.status"]
+        XCTAssertTrue(safetyStatus.waitForExistence(timeout: 5))
+        XCTAssertTrue(safetyStatus.label.hasPrefix("Tidak ada safety hold aktif"))
     }
 
     func testImmediatePrivateRouteUsesThreeDecisionFlow() {
@@ -267,6 +306,21 @@ final class TempoUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter().wait(for: [enabled], timeout: 5), .completed)
         XCTAssertTrue(button.isHittable)
         button.tap()
+    }
+
+    private func confirmIdentifiedToggle(_ identifier: String) {
+        let toggle = app.switches[identifier]
+        for _ in 0..<3 {
+            if toggle.waitForExistence(timeout: 1), toggle.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertTrue(toggle.isEnabled)
+        if toggle.frame.midY > app.frame.midY {
+            app.swipeUp()
+        }
+        XCTAssertTrue(toggle.isHittable)
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
     }
 
     private func tapNavigationBarButton(_ label: String) {

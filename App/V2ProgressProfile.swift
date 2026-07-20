@@ -61,7 +61,7 @@ struct TempoProgressScreen: View {
                 if let consistency {
                     Text("\(Int((consistency * 100).rounded()))%")
                         .font(.system(size: 42, weight: .bold, design: .rounded)).foregroundStyle(TempoDesign.Palette.positive).monospacedDigit()
-                    Text("Menghitung aktivitas yang memang sudah jatuh tempo; pemulihan yang diresepkan tidak dianggap gagal.")
+                    Text("Konsistensi menghitung aktivitas yang memang perlu dilakukan, termasuk pemulihan terjadwal. Pemulihan karena keselamatan atau penyesuaian kondisi tidak dianggap gagal.")
                         .font(TempoDesign.Typography.supporting).foregroundStyle(TempoDesign.Palette.textSecondary)
                 } else {
                     Text("Belum ada aktivitas yang jatuh tempo untuk dihitung.").foregroundStyle(TempoDesign.Palette.textSecondary)
@@ -229,7 +229,9 @@ struct TempoProfileScreen: View {
                 Text("Keselamatan").font(TempoDesign.Typography.sectionTitle)
                 Text(history.hasSafetyBlock ? "Safety hold aktif. Sesi terpandu dijeda sampai pemeriksaan ulang selesai." : "Tidak ada safety hold aktif. TEMPO tetap bukan alat diagnosis atau layanan darurat.")
                     .foregroundStyle(TempoDesign.Palette.textSecondary)
+                    .accessibilityIdentifier("profile.safety.status")
                 TempoSecondaryButton("Buka pemeriksaan", icon: "cross.case.fill", tone: history.hasSafetyBlock ? .caution : .accent) { coordinator.open(.healthCheck) }
+                    .accessibilityIdentifier("profile.safety.open")
             }
         }
     }
@@ -408,6 +410,7 @@ struct TempoHealthCheckScreen: View {
     @State private var answers = SafetyScreeningAnswers()
     @State private var confirmedComplete = false
     @State private var confirmedMedicalFollowUp = false
+    @State private var confirmedAllActiveHoldsResolved = false
     @State private var saveFailed = false
 
     private var hasSymptoms: Bool { answers.hasAny }
@@ -423,7 +426,20 @@ struct TempoHealthCheckScreen: View {
                 Text("Jawab semua bagian sebelum melanjutkan. Kondisi berat, memburuk, atau cedera akut memerlukan bantuan medis sesuai layanan setempat.")
                     .font(.subheadline).foregroundStyle(.secondary)
             }
-            if let activeHold = history.activeSafetyHold {
+            if history.requiresMultipleHoldConfirmation {
+                Section {
+                    ForEach(history.unresolvedSafetyHoldSummaries) { summary in
+                        VStack(alignment: .leading, spacing: TempoDesign.Spacing.xs) {
+                            Text(summary.title).font(TempoDesign.Typography.cardTitle)
+                            Text(summary.detail).font(.subheadline).foregroundStyle(.secondary)
+                        }
+                        .accessibilityIdentifier("health.check.holdSummary.\(summary.id.uuidString)")
+                    }
+                } header: {
+                    Text("Ada beberapa catatan keselamatan aktif")
+                        .accessibilityIdentifier("health.check.multipleHolds")
+                }
+            } else if let activeHold = history.activeSafetyHold {
                 Section("Safety hold aktif") {
                     Text(activeHoldReason(activeHold.reasonCode))
                         .foregroundStyle(.secondary)
@@ -436,28 +452,32 @@ struct TempoHealthCheckScreen: View {
             }
             Section("Tanda keselamatan") {
                 SafetyScreeningFields(answers: $answers)
-                confirmationButton(
+                confirmationToggle(
                     "Saya sudah membaca dan menjawab semua bagian",
-                    isConfirmed: confirmedComplete,
+                    isConfirmed: $confirmedComplete,
                     identifier: "health.check.confirmed"
-                ) {
-                    confirmedComplete.toggle()
-                }
+                )
                 if requiresMedicalResolutionConfirmation && !hasSymptoms {
-                    confirmationButton(
+                    confirmationToggle(
                         "Gejala sudah hilang atau dinilai tenaga kesehatan",
-                        isConfirmed: confirmedMedicalFollowUp,
+                        isConfirmed: $confirmedMedicalFollowUp,
                         identifier: "health.check.medicalFollowUp"
-                    ) {
-                        confirmedMedicalFollowUp.toggle()
-                    }
+                    )
+                }
+                if history.requiresMultipleHoldConfirmation && !hasSymptoms {
+                    confirmationToggle(
+                        "Saya memastikan semua keluhan yang tercatat sudah hilang atau sudah dinilai tenaga kesehatan.",
+                        isConfirmed: $confirmedAllActiveHoldsResolved,
+                        identifier: "health.check.confirmedAllActiveHoldsResolved"
+                    )
                 }
             }
             Section {
                 Text(statusMessage).foregroundStyle(hasSymptoms ? .red : .secondary)
                 Button(hasSymptoms ? "Simpan dan jeda latihan" : "Konfirmasi tidak ada gejala") { save() }
-                    .disabled(!confirmedComplete || (!hasSymptoms && (!history.canResolveActiveSafetyHold || (requiresMedicalResolutionConfirmation && !confirmedMedicalFollowUp))))
+                    .disabled(!canSubmit)
                     .accessibilityIdentifier("health.check.submit")
+                    .accessibilityValue(submitAccessibilityValue)
             }
         }
         .navigationTitle("Pemeriksaan")
@@ -472,6 +492,20 @@ struct TempoHealthCheckScreen: View {
         return "Jika seluruh jawaban tidak, safety hold aktif dapat diakhiri melalui pemeriksaan ulang lengkap ini."
     }
 
+    private var canSubmit: Bool {
+        guard confirmedComplete else { return false }
+        if hasSymptoms { return true }
+        guard history.canResolveActiveSafetyHold else { return false }
+        if requiresMedicalResolutionConfirmation && !confirmedMedicalFollowUp { return false }
+        if history.requiresMultipleHoldConfirmation && !confirmedAllActiveHoldsResolved { return false }
+        return true
+    }
+
+    private var submitAccessibilityValue: String {
+        if canSubmit { return "Siap" }
+        return "Belum siap. Lengkapi semua konfirmasi yang diperlukan."
+    }
+
     private func activeHoldReason(_ code: String) -> String {
         let normalized = code.lowercased()
         if normalized.contains("blood") { return "Darah pernah dilaporkan. Aktivitas tetap dijeda sampai pemeriksaan ulang aman." }
@@ -484,34 +518,33 @@ struct TempoHealthCheckScreen: View {
         return "Safety hold aktif yang tersimpan masih memerlukan pemeriksaan ulang sebelum sesi dapat dimulai."
     }
 
-    private func confirmationButton(
+    private func confirmationToggle(
         _ title: String,
-        isConfirmed: Bool,
-        identifier: String,
-        action: @escaping () -> Void
+        isConfirmed: Binding<Bool>,
+        identifier: String
     ) -> some View {
-        Button(action: action) {
+        Toggle(isOn: isConfirmed) {
             HStack(alignment: .firstTextBaseline, spacing: TempoDesign.Spacing.sm) {
-                Image(systemName: isConfirmed ? "checkmark.circle.fill" : "circle")
+                Image(systemName: isConfirmed.wrappedValue ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
-                    .foregroundStyle(isConfirmed ? TempoDesign.Palette.accentSoft : TempoDesign.Palette.textSecondary)
+                    .foregroundStyle(isConfirmed.wrappedValue ? TempoDesign.Palette.accentSoft : TempoDesign.Palette.textSecondary)
                     .accessibilityHidden(true)
                 Text(title)
                     .foregroundStyle(TempoDesign.Palette.textPrimary)
                 Spacer(minLength: TempoDesign.Spacing.sm)
             }
         }
-        .buttonStyle(TempoTactileButtonStyle())
+        .tint(TempoDesign.Palette.accent)
         .accessibilityIdentifier(identifier)
         .accessibilityLabel(title)
-        .accessibilityValue(isConfirmed ? "Dikonfirmasi" : "Belum dikonfirmasi")
-        .accessibilityAddTraits(isConfirmed ? .isSelected : [])
     }
 
     private func save() {
         let success = hasSymptoms
             ? history.recordSafetyHold(reasonCode: answers.reasonCode, severity: answers.severity.rawValue, source: "health-check")
-            : history.resolveActiveSafetyHoldAfterClearRecheck()
+            : history.resolveActiveSafetyHoldAfterClearRecheck(
+                confirmedAllActiveHoldsResolved: confirmedAllActiveHoldsResolved
+            )
         if success { dismiss() } else { saveFailed = true }
     }
 }

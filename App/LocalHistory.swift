@@ -605,6 +605,12 @@ struct LocalSafetyHold: Codable, Identifiable, Equatable {
     var resolvedAt: Date?
 }
 
+struct SafetyHoldSummary: Identifiable, Equatable {
+    let id: UUID
+    let title: String
+    let detail: String
+}
+
 private struct LocalProfileState: Codable {
     var schemaVersion = 4
     var baseline: LocalBaseline?
@@ -699,6 +705,8 @@ final class LocalHistory {
     private let safetyRecheckJournalStorageKey = "tempo.pending-safety-recheck.v1"
     private let planRepository = LocalPlanRepository()
     private let privateSessionRepository = LocalPrivateSessionRepository()
+    private let safetyRecheckProtectedStore: (Data, String) -> Bool
+    private let safetyRecheckProfileStore: (Data) -> Bool
 
     var baseline: LocalBaseline? { profile.baseline }
     var safetyHoldCount: Int { profile.safetyHolds.count }
@@ -708,6 +716,40 @@ final class LocalHistory {
     var unresolvedSafetyHolds: [LocalSafetyHold] {
         profile.safetyHolds.filter { $0.resolvedAt == nil }
     }
+    var unresolvedSafetyHoldSummaries: [SafetyHoldSummary] {
+        unresolvedSafetyHolds
+            .sorted { $0.createdAt < $1.createdAt }
+            .map { hold in
+                let normalized = hold.reasonCode.lowercased()
+                let title: String
+                if normalized.contains("post-session") || hold.source.contains("session") {
+                    title = "Keluhan pascasession"
+                } else if normalized.contains("irritation") {
+                    title = "Iritasi ringan"
+                } else if normalized.contains("blood") || normalized.contains("fever") {
+                    title = "Darah atau demam"
+                } else if normalized.contains("urinary") || normalized.contains("discharge") {
+                    title = "Keluhan saluran kemih"
+                } else if normalized.contains("pain") {
+                    title = "Nyeri"
+                } else {
+                    title = "Alasan keselamatan lain"
+                }
+                let detail: String
+                switch RecommendationSeverity(rawValue: hold.severity) {
+                case .urgent:
+                    detail = "Catatan mendesak; pastikan keluhan sudah hilang atau sudah dinilai tenaga kesehatan."
+                case .medical:
+                    detail = "Catatan medis; konfirmasi tindak lanjut sebelum mengakhiri jeda."
+                case .caution:
+                    detail = "Catatan kehati-hatian; tunggu masa pemeriksaan ulang selesai."
+                case .normal, .none:
+                    detail = "Catatan ini tetap aktif sampai pemeriksaan ulang selesai."
+                }
+                return SafetyHoldSummary(id: hold.id, title: title, detail: detail)
+            }
+    }
+    var requiresMultipleHoldConfirmation: Bool { unresolvedSafetyHolds.count > 1 }
     var activeSafetyHold: LocalSafetyHold? {
         unresolvedSafetyHolds.max { lhs, rhs in
             let left = safetyHoldPriority(lhs)
@@ -958,7 +1000,16 @@ final class LocalHistory {
         try? JSONEncoder().encode(LocalExportSnapshot(exportedAt: .now, rulesetVersion: RulesetVersion.current.rawValue, profile: profile, checkIns: checkIns, urgeOutcomes: urgeOutcomes, sessions: sessions, privateSessions: privateSessions, exercises: exercises, dailyReadiness: dailyReadiness, plan: plannedDays))
     }
 
-    init() {
+    init(
+        safetyRecheckProtectedStore: @escaping (Data, String) -> Bool = { data, key in
+            ProtectedFileStore.store(data, for: key)
+        },
+        safetyRecheckProfileStore: @escaping (Data) -> Bool = { data in
+            SecureLocalStore.store(data, for: "tempo.local.profile.v1")
+        }
+    ) {
+        self.safetyRecheckProtectedStore = safetyRecheckProtectedStore
+        self.safetyRecheckProfileStore = safetyRecheckProfileStore
         hasPendingSafetyWrite = UserDefaults.standard.bool(forKey: pendingSafetyStorageKey)
         load()
         recoverPendingSafetyRecheckIfNeeded()
@@ -1193,11 +1244,14 @@ final class LocalHistory {
     }
 
     @discardableResult
-    func resolveActiveSafetyHoldAfterClearRecheck() -> Bool {
+    func resolveActiveSafetyHoldAfterClearRecheck(
+        confirmedAllActiveHoldsResolved: Bool = false
+    ) -> Bool {
         if hasPendingSafetyWrite {
             return recordSafetyHold(reasonCode: "safety.pending-write-recovery", severity: RecommendationSeverity.medical.rawValue, source: "recovery")
         }
         guard canResolveActiveSafetyHold else { return false }
+        guard !requiresMultipleHoldConfirmation || confirmedAllActiveHoldsResolved else { return false }
         let now = Date.now
         let mutation = SafetyRecheckResolution.resolve(holds: profile.safetyHolds, readiness: dailyReadiness, at: now)
         var updatedProfile = profile
@@ -1206,12 +1260,12 @@ final class LocalHistory {
 
         // Write a durable intent before either store changes. The startup
         // recovery path replays it idempotently if the app is interrupted.
-        guard save(journal, for: safetyRecheckJournalStorageKey) else { return false }
-        guard save(mutation.readiness, for: dailyReadinessStorageKey) else {
+        guard saveSafetyRecheck(journal, for: safetyRecheckJournalStorageKey) else { return false }
+        guard saveSafetyRecheck(mutation.readiness, for: dailyReadinessStorageKey) else {
             markPendingSafetyWrite()
             return false
         }
-        guard persistProfile(updatedProfile) else {
+        guard persistSafetyRecheckProfile(updatedProfile) else {
             _ = save(dailyReadiness, for: dailyReadinessStorageKey)
             markPendingSafetyWrite()
             return false
@@ -1746,6 +1800,16 @@ final class LocalHistory {
     private func persistProfile(_ value: LocalProfileState) -> Bool {
         guard let data = try? JSONEncoder().encode(value) else { return false }
         return SecureLocalStore.store(data, for: profileStorageKey)
+    }
+
+    private func saveSafetyRecheck<T: Encodable>(_ value: T, for key: String) -> Bool {
+        guard let data = try? JSONEncoder().encode(value) else { return false }
+        return safetyRecheckProtectedStore(data, key)
+    }
+
+    private func persistSafetyRecheckProfile(_ value: LocalProfileState) -> Bool {
+        guard let data = try? JSONEncoder().encode(value) else { return false }
+        return safetyRecheckProfileStore(data)
     }
 
     private func sessionDroppingRawEvents(_ value: LocalSession) -> LocalSession {

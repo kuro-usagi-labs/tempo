@@ -315,6 +315,66 @@ final class TempoDomainTests: XCTestCase {
         XCTAssertTrue(held.allSatisfy { $0.reasons.contains(.safetyHold) })
     }
 
+    func testHighStimulusResetAppearsOnlyInCandidateProgramWeekOne() {
+        let calendar = utcCalendar
+        let monday = date(2026, 7, 13, calendar: calendar)
+        let generator = WeeklyPlanGenerator()
+
+        let twoWeeks = generator.generate(
+            weekStarting: monday,
+            weeks: 2,
+            context: ProgramContext(phase: .awareness, baselineCompleted: true, highStimulusPattern: true, programWeek: 1),
+            calendar: calendar
+        )
+        let fourWeeks = generator.generate(
+            weekStarting: monday,
+            weeks: 4,
+            context: ProgramContext(phase: .awareness, baselineCompleted: true, highStimulusPattern: true, programWeek: 1),
+            calendar: calendar
+        )
+
+        XCTAssertEqual(twoWeeks.filter { $0.reasons.contains(.highStimulusReset) }.count, 1)
+        XCTAssertEqual(fourWeeks.filter { $0.reasons.contains(.highStimulusReset) }.count, 1)
+        XCTAssertLessThan(
+            twoWeeks.first { $0.reasons.contains(.highStimulusReset) }!.scheduledAt,
+            calendar.date(byAdding: .day, value: 7, to: monday)!
+        )
+    }
+
+    func testHighStimulusResetIsNotGeneratedAfterWeekOneOrWithoutPattern() {
+        let calendar = utcCalendar
+        let monday = date(2026, 7, 13, calendar: calendar)
+        let generator = WeeklyPlanGenerator()
+        let weekTwo = generator.generate(
+            weekStarting: monday,
+            weeks: 2,
+            context: ProgramContext(phase: .awareness, baselineCompleted: true, highStimulusPattern: true, programWeek: 2),
+            calendar: calendar
+        )
+        let noPattern = generator.generate(
+            weekStarting: monday,
+            weeks: 2,
+            context: ProgramContext(phase: .awareness, baselineCompleted: true, highStimulusPattern: false, programWeek: 1),
+            calendar: calendar
+        )
+
+        XCTAssertFalse(weekTwo.contains { $0.reasons.contains(.highStimulusReset) })
+        XCTAssertFalse(noPattern.contains { $0.reasons.contains(.highStimulusReset) })
+    }
+
+    func testHighStimulusGenerationIsStableAcrossRefreshes() {
+        let calendar = utcCalendar
+        let monday = date(2026, 7, 13, calendar: calendar)
+        let context = ProgramContext(phase: .awareness, baselineCompleted: true, highStimulusPattern: true, programWeek: 1)
+        let first = WeeklyPlanGenerator().generate(weekStarting: monday, weeks: 2, context: context, calendar: calendar)
+        let refreshed = WeeklyPlanGenerator().generate(weekStarting: monday, weeks: 2, context: context, calendar: calendar)
+        let firstEducation = first.filter { $0.reasons.contains(.highStimulusReset) }
+        let refreshedEducation = refreshed.filter { $0.reasons.contains(.highStimulusReset) }
+
+        XCTAssertEqual(firstEducation.map(\.id), refreshedEducation.map(\.id))
+        XCTAssertEqual(Set(refreshedEducation.map(\.id)).count, 1)
+    }
+
     func testPrivateSessionOnMondayDoesNotRemoveThursdayGuidedSession() {
         let calendar = utcCalendar
         let monday = date(2026, 7, 13, hour: 0, calendar: calendar)
@@ -720,7 +780,7 @@ final class TempoDomainTests: XCTestCase {
         XCTAssertEqual(completed.completed(as: .cardio, at: scheduled), completed)
     }
 
-    func testProgressEngineUsesOnlyDueNonRecoveryItemsAndWaitsForSamples() {
+    func testProgressEngineCountsDueNormalRecoveryAndWaitsForSamples() {
         let calendar = utcCalendar
         let start = date(2026, 7, 13, hour: 9, calendar: calendar)
         let completed = planItem(scheduledAt: start, kind: .cardio).completed(as: .cardio, at: start)
@@ -745,10 +805,11 @@ final class TempoDomainTests: XCTestCase {
         XCTAssertEqual(engine.presentation(sessionCount: 2, scores: scores), .collecting(samplesNeeded: 1))
         XCTAssertEqual(engine.presentation(sessionCount: 3, scores: scores), .ready(scores))
         XCTAssertEqual(
-            engine.consistency(for: [completed, missed, recovery, future], through: date(2026, 7, 14, hour: 23, calendar: calendar), calendar: calendar),
-            0.5
+            engine.consistency(for: [completed, missed, recovery, future], through: date(2026, 7, 14, hour: 23, calendar: calendar), calendar: calendar) ?? -1,
+            1.0 / 3.0,
+            accuracy: 0.0001
         )
-        XCTAssertNil(engine.consistency(for: [future, recovery], through: start, calendar: calendar))
+        XCTAssertEqual(engine.consistency(for: [future, recovery], through: start, calendar: calendar), 0)
     }
 
     func testDailySymptomTypesMapToConservativeSafetyRules() {
@@ -1087,7 +1148,7 @@ final class TempoDomainTests: XCTestCase {
         XCTAssertEqual(result ?? -1, 1.0, accuracy: 0.0001)
     }
 
-    func testProgressConsistencyDeduplicatesLegacyReplacementChildrenAndExcludesRecovery() {
+    func testProgressConsistencyDeduplicatesLegacyReplacementChildrenAndCountsNormalRecovery() {
         let calendar = utcCalendar
         let sourceDate = date(2026, 7, 13, hour: 18, minute: 30, calendar: calendar)
         let source = planItem(scheduledAt: sourceDate, kind: .guided)
@@ -1119,7 +1180,105 @@ final class TempoDomainTests: XCTestCase {
             calendar: calendar
         )
 
-        XCTAssertEqual(result ?? -1, 1.0, accuracy: 0.0001)
+        XCTAssertEqual(result ?? -1, 0.5, accuracy: 0.0001)
+    }
+
+    func testConsistencyEligibilityDistinguishesRequiredExcusedAndFutureRecovery() {
+        let calendar = utcCalendar
+        let due = date(2026, 7, 13, hour: 9, calendar: calendar)
+        let through = date(2026, 7, 14, hour: 23, calendar: calendar)
+        let engine = ProgressEngine()
+        let scheduledRecovery = planItem(scheduledAt: due, kind: .recovery, reasons: [.nervousSystemRecovery])
+        let completedRecovery = scheduledRecovery.completed(as: .recovery, at: due)
+        let futureRecovery = planItem(scheduledAt: date(2026, 7, 17, hour: 9, calendar: calendar), kind: .recovery, reasons: [.nervousSystemRecovery])
+
+        XCTAssertEqual(engine.consistencyEligibility(for: scheduledRecovery, through: through), .required)
+        XCTAssertEqual(engine.consistency(for: [scheduledRecovery], through: through, calendar: calendar), 0)
+        XCTAssertEqual(engine.consistency(for: [completedRecovery], through: through, calendar: calendar), 1)
+        XCTAssertEqual(engine.consistencyEligibility(for: futureRecovery, through: through), .notDue)
+        XCTAssertNil(engine.consistency(for: [futureRecovery], through: through, calendar: calendar))
+    }
+
+    func testConsistencyExcusesSafetyAndDailyConditionRecoveryAdaptations() {
+        let calendar = utcCalendar
+        let due = date(2026, 7, 13, hour: 9, calendar: calendar)
+        let through = date(2026, 7, 14, hour: 23, calendar: calendar)
+        let original = planItem(scheduledAt: due, kind: .guided)
+        let reasons: [PlanReason] = [
+            .safetyHold, .unavailable, .lowSleep, .lowEnergy, .highAnxiety,
+            .exerciseRestriction, .unsafeActivitySpace, .privateRecoveryWindow,
+            .guidedRecoveryWindow
+        ]
+        let adapted = reasons.map { reason in
+            original.adapted(to: .recovery, reasons: [reason], at: due)
+        }
+        let generatedSafetyRecovery = ProgramPlanItem(
+            scheduledAt: due,
+            prescribedKind: .recovery,
+            estimatedMinutes: 5,
+            phase: .safetyHold,
+            reasons: [.nervousSystemRecovery, .safetyHold]
+        )
+        let engine = ProgressEngine()
+
+        XCTAssertTrue(adapted.allSatisfy { engine.consistencyEligibility(for: $0, through: through) == .excused })
+        XCTAssertEqual(engine.consistencyEligibility(for: generatedSafetyRecovery, through: through), .excused)
+        XCTAssertNil(engine.consistency(for: adapted + [generatedSafetyRecovery], through: through, calendar: calendar))
+    }
+
+    func testConsistencyCountsACompletedReplacementOnceAndExcusesItsSource() {
+        let calendar = utcCalendar
+        let sourceDate = date(2026, 7, 13, hour: 9, calendar: calendar)
+        let replacementDate = date(2026, 7, 14, hour: 9, calendar: calendar)
+        let source = planItem(scheduledAt: sourceDate, kind: .recovery, reasons: [.nervousSystemRecovery])
+        let skippedSource = source.skipped(reasons: [.postponed, .safeReschedule], at: sourceDate)
+        let replacement = ProgramPlanItem(
+            scheduledAt: replacementDate,
+            prescribedKind: .recovery,
+            estimatedMinutes: 5,
+            phase: .awareness,
+            reasons: [.nervousSystemRecovery],
+            status: .recovery,
+            adaptation: PlanAdaptation(
+                adaptedAt: sourceDate,
+                originalKind: .recovery,
+                replacementKind: .recovery,
+                reasons: [.postponed, .safeReschedule],
+                rescheduledFromID: source.id
+            )
+        ).completed(as: .recovery, at: replacementDate)
+        let engine = ProgressEngine()
+
+        XCTAssertEqual(engine.consistencyEligibility(for: skippedSource, through: replacementDate), .excused)
+        XCTAssertEqual(engine.consistencyEligibility(for: replacement, through: replacementDate), .required)
+        XCTAssertEqual(engine.consistency(for: [skippedSource, replacement], through: replacementDate, calendar: calendar), 1)
+    }
+
+    func testConsistencyNeverDoubleCountsALegacySourceWhenAChildExists() {
+        let calendar = utcCalendar
+        let sourceDate = date(2026, 7, 13, hour: 9, calendar: calendar)
+        let childDate = date(2026, 7, 14, hour: 9, calendar: calendar)
+        let legacySource = planItem(scheduledAt: sourceDate, kind: .guided)
+        let completedChild = ProgramPlanItem(
+            scheduledAt: childDate,
+            prescribedKind: .guided,
+            estimatedMinutes: 20,
+            phase: .awareness,
+            reasons: [.guidedSpacing],
+            status: .adapted,
+            adaptation: PlanAdaptation(
+                adaptedAt: sourceDate,
+                originalKind: .guided,
+                replacementKind: .guided,
+                reasons: [.postponed],
+                rescheduledFromID: legacySource.id
+            )
+        ).completed(as: .guided, at: childDate)
+
+        XCTAssertEqual(
+            ProgressEngine().consistency(for: [legacySource, completedChild], through: childDate, calendar: calendar),
+            1
+        )
     }
 
     private var utcCalendar: Calendar {

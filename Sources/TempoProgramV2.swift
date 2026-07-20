@@ -7,7 +7,7 @@ public struct RulesetVersion: RawRepresentable, Codable, Equatable, Hashable, Se
 
     public init(rawValue: String) { self.rawValue = rawValue }
 
-    public static let current = RulesetVersion(rawValue: "2.1.2")
+    public static let current = RulesetVersion(rawValue: "2.1.3")
 
     public static func < (lhs: RulesetVersion, rhs: RulesetVersion) -> Bool {
         lhs.rawValue.compare(rhs.rawValue, options: .numeric) == .orderedAscending
@@ -539,7 +539,9 @@ public struct WeeklyPlanGenerator: Sendable {
             var adaptationReasons: [PlanReason] = []
             let activityPreference = context.activityPreference ?? ActivityPreference(legacyValue: context.preferredActivity)
             let highMovement = (context.weeklyMovementMinutes ?? (context.activityLevel?.localizedCaseInsensitiveContains("aktif") == true ? 150 : 0)) >= 150
-            if context.highStimulusPattern, context.programWeek <= 1, offset % 7 == 2 {
+            let candidateWeekOffset = offset / 7
+            let candidateProgramWeek = context.programWeek + candidateWeekOffset
+            if context.highStimulusPattern, candidateProgramWeek == 1, offset % 7 == 2 {
                 requestedKind = .education
                 adaptationReasons.append(.highStimulusReset)
             } else if template.kind == .cardio, offset % 7 == 5, highMovement {
@@ -1244,6 +1246,12 @@ public enum ProgressPresentationState: Equatable, Sendable {
     case ready(ScoreSnapshot)
 }
 
+public enum ConsistencyEligibility: Equatable, Sendable {
+    case required
+    case excused
+    case notDue
+}
+
 public struct ProgressEngine: Sendable {
     public init() {}
 
@@ -1253,20 +1261,60 @@ public struct ProgressEngine: Sendable {
     }
 
     public func consistency(for items: [ProgramPlanItem], through date: Date, calendar: Calendar = Calendar(identifier: .gregorian)) -> Double? {
-        let due = items.filter { $0.scheduledAt <= date && countsTowardConsistency($0) }
+        let replacementSourceIDs = Set(items.compactMap { $0.adaptation?.rescheduledFromID })
+        let due = items.filter {
+            consistencyEligibility(for: $0, through: date) == .required &&
+                ($0.adaptation?.rescheduledFromID != nil || !replacementSourceIDs.contains($0.id))
+        }
         let uniqueDue = deduplicatedReplacements(in: due)
         guard !uniqueDue.isEmpty else { return nil }
         let done = uniqueDue.filter { $0.status == .completed }.count
         return Double(done) / Double(uniqueDue.count)
     }
 
-    private func countsTowardConsistency(_ item: ProgramPlanItem) -> Bool {
-        if item.status == .recovery { return false }
-        if item.effectiveKind == .recovery { return item.status == .completed }
-        let reasons = Set(item.adaptation?.reasons ?? [])
-        let safelyExcused: Set<PlanReason> = [.postponed, .safeReschedule, .unavailable, .safetyHold]
-        if item.status == .skipped && !reasons.isDisjoint(with: safelyExcused) { return false }
-        return true
+    public func consistencyEligibility(
+        for item: ProgramPlanItem,
+        through date: Date
+    ) -> ConsistencyEligibility {
+        guard item.scheduledAt <= date else { return .notDue }
+
+        let adaptationReasons = Set(item.adaptation?.reasons ?? [])
+        let originalKind = item.adaptation?.originalKind ?? item.prescribedKind
+        let effectiveKind = item.effectiveKind
+        let changedKind = originalKind != effectiveKind
+        let isRecoveryLike = effectiveKind == .recovery || effectiveKind == .breathing
+        let isReplacement = item.adaptation?.rescheduledFromID != nil
+        let isPostponedSource = !isReplacement && item.status == .skipped &&
+            (!adaptationReasons.isDisjoint(with: [.postponed, .safeReschedule]))
+        if isPostponedSource { return .excused }
+
+        // These reasons mean Tempo substituted a lower-demand activity for
+        // safety or today's real-world capacity. Completing one is welcome,
+        // but leaving it incomplete must never reduce consistency.
+        let excusedAdaptations: Set<PlanReason> = [
+            .safetyHold,
+            .unavailable,
+            .privateRecoveryWindow,
+            .guidedRecoveryWindow,
+            .guidedSpacing,
+            .lowSleep,
+            .lowEnergy,
+            .highAnxiety,
+            .exerciseRestriction,
+            .unsafeActivitySpace
+        ]
+        let isGeneratedSafetyRecovery = isRecoveryLike &&
+            (item.phase == .safetyHold || item.reasons.contains(.safetyHold))
+        let isExcusedAdaptation = !adaptationReasons.isDisjoint(with: excusedAdaptations) &&
+            (changedKind || isRecoveryLike)
+        if isGeneratedSafetyRecovery || isExcusedAdaptation {
+            return .excused
+        }
+
+        // A linked replacement remains the one required occurrence even when
+        // its linkage reasons contain postponed/safeReschedule. Normal
+        // prescribed recovery and breathing are required like any other item.
+        return .required
     }
 
     /// Historical data may contain more than one replacement for the same

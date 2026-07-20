@@ -651,7 +651,7 @@ struct TempoProgramScreen: View {
     private var calendarStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: TempoDesign.Spacing.xs) {
-                ForEach(weekDays, id: \.self) { date in
+                ForEach(Array(weekDays.enumerated()), id: \.element) { index, date in
                     let isSelected = Calendar.current.isDate(date, inSameDayAs: selectedDay)
                     Button { selectedDay = date } label: {
                         VStack(spacing: 5) {
@@ -665,6 +665,7 @@ struct TempoProgramScreen: View {
                     }
                     .buttonStyle(TempoTactileButtonStyle())
                     .accessibilityLabel(date.formatted(.dateTime.weekday(.wide).day().month(.wide)))
+                    .accessibilityIdentifier("program.day.\(index)")
                 }
             }
         }
@@ -762,10 +763,23 @@ struct TempoPlanDetailScreen: View {
                             TempoSecondaryButton("Saya tidak tersedia", icon: "calendar.badge.exclamationmark", tone: .caution) {
                                 if history.markPlanUnavailable(id: item.id) { dismiss() } else { actionFailed = true }
                             }
-                            TempoSecondaryButton("Tunda dengan aman", icon: "arrow.right.circle", tone: .accent) {
-                                showReplacementAfterPostponing(item)
+                            if item.rescheduledFromID == nil {
+                                TempoSecondaryButton("Tunda dengan aman", icon: "arrow.right.circle", tone: .accent) {
+                                    showReplacementAfterPostponing(item)
+                                }
+                                .accessibilityIdentifier("plan.detail.postpone")
+                            } else {
+                                TempoSurfaceCard(tint: TempoDesign.Palette.accentSoft, emphasis: .tinted) {
+                                    VStack(alignment: .leading, spacing: TempoDesign.Spacing.xs) {
+                                        Label("Aktivitas ini sudah pernah ditunda", systemImage: "checkmark.circle.fill")
+                                            .font(TempoDesign.Typography.cardTitle)
+                                        Text("Jadwal pengganti tidak dapat ditunda lagi agar program tidak membuat rantai jadwal baru.")
+                                            .font(TempoDesign.Typography.supporting)
+                                            .foregroundStyle(TempoDesign.Palette.textSecondary)
+                                    }
+                                }
+                                .accessibilityIdentifier("plan.detail.alreadyRescheduled")
                             }
-                            .accessibilityIdentifier("plan.detail.postpone")
                         }
                     }
                     .frame(maxWidth: TempoDesign.readableContentWidth, alignment: .leading)
