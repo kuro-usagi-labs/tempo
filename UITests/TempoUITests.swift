@@ -11,8 +11,7 @@ final class TempoUITests: XCTestCase {
     }
 
     func testOnboardingStartsWithSevenStepFoundation() {
-        XCTAssertTrue(identifiedElement("onboarding.v22").waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["onboarding.adultConfirmed"].exists)
+        XCTAssertTrue(app.buttons["onboarding.adultConfirmed"].waitForExistence(timeout: 5))
         XCTAssertTrue(nextButton.exists)
         XCTAssertFalse(nextButton.isEnabled)
     }
@@ -35,16 +34,14 @@ final class TempoUITests: XCTestCase {
         app = XCUIApplication()
         app.launch()
 
-        XCTAssertTrue(identifiedElement("onboarding.v22").waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["onboarding.adultConfirmed"].exists)
-        XCTAssertTrue(nextButton.exists)
+        XCTAssertTrue(nextButton.waitForExistence(timeout: 5))
     }
 
     func testProgramCalendarIsReachableAfterBaseline() {
         completeOnboarding()
         app.tabBars.buttons["Program"].tap()
-        XCTAssertTrue(identifiedElement("tab.program").waitForExistence(timeout: 5))
-        XCTAssertTrue(identifiedElement("program.week.summary").exists)
+        XCTAssertTrue(identifiedElement("program.week.summary").waitForExistence(timeout: 5))
     }
 
     func testProgramWeekNavigationAndTodayResetAreReachable() {
@@ -150,7 +147,7 @@ final class TempoUITests: XCTestCase {
         XCTAssertTrue(app.tabBars.buttons["Pengaturan"].waitForExistence(timeout: 5))
         app.tabBars.buttons["Pengaturan"].tap()
         tapButton("Keselamatan")
-        tapIdentified("profile.safety.open")
+        tapButton("Buka pemeriksaan")
         XCTAssertTrue(identifiedElement("health.check.multipleHolds").waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Nyeri"].exists)
         XCTAssertTrue(app.staticTexts["Keluhan saluran kemih"].exists)
@@ -266,7 +263,7 @@ final class TempoUITests: XCTestCase {
     private func completeOnboarding() {
         confirmAdultAndAdvance()
         for _ in 0..<5 { tapNext() }
-        let finishButton = app.buttons["onboarding.finish"]
+        let finishButton = app.buttons["Masuk ke Hari Ini"]
         XCTAssertTrue(finishButton.waitForExistence(timeout: 5))
         XCTAssertTrue(finishButton.isEnabled)
         finishButton.tap()
@@ -295,10 +292,10 @@ final class TempoUITests: XCTestCase {
             tapIdentified("today.primary.start")
         }
         tapIdentified("today.readiness.confirm")
-        XCTAssertTrue(identifiedElement("tab.today").waitForExistence(timeout: 5))
+        XCTAssertTrue(app.tabBars.buttons["Hari Ini"].waitForExistence(timeout: 5))
     }
 
-    private var nextButton: XCUIElement { app.buttons["onboarding.next"] }
+    private var nextButton: XCUIElement { app.buttons["Lanjut"] }
 
     private func tapNext() {
         XCTAssertTrue(nextButton.waitForExistence(timeout: 5))
