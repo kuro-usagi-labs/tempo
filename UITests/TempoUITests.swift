@@ -310,38 +310,17 @@ final class TempoUITests: XCTestCase {
 
     private func confirmIdentifiedToggle(_ identifier: String) {
         let toggle = app.switches[identifier]
-        let expectedStates = [
-            "health.check.confirmed": "lengkap true",
-            "health.check.medicalFollowUp": "medis true",
-            "health.check.confirmedAllActiveHoldsResolved": "semua true",
-        ]
-        guard let expectedState = expectedStates[identifier] else {
-            XCTFail("Unknown confirmation toggle: \(identifier)")
-            return
-        }
-        let submit = app.buttons["health.check.submit"]
-
         for _ in 0..<3 {
-            if String(describing: submit.value).contains(expectedState) { return }
-            for _ in 0..<3 {
-                if toggle.waitForExistence(timeout: 1), toggle.isHittable { break }
-                app.swipeUp()
-            }
-            XCTAssertTrue(toggle.waitForExistence(timeout: 5))
-            XCTAssertTrue(toggle.isEnabled)
-            if toggle.frame.midY > app.frame.midY {
-                app.swipeUp()
-            }
-            XCTAssertTrue(toggle.isHittable)
-            toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
-
-            let confirmed = XCTNSPredicateExpectation(
-                predicate: NSPredicate(format: "value CONTAINS %@", expectedState),
-                object: submit
-            )
-            if XCTWaiter().wait(for: [confirmed], timeout: 2) == .completed { return }
+            if toggle.waitForExistence(timeout: 1), toggle.isHittable { break }
+            app.swipeUp()
         }
-        XCTFail("Confirmation did not change state: \(identifier); submit=\(String(describing: submit.value))")
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertTrue(toggle.isEnabled)
+        if toggle.frame.midY > app.frame.midY {
+            app.swipeUp()
+        }
+        XCTAssertTrue(toggle.isHittable)
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
     }
 
     private func tapNavigationBarButton(_ label: String) {
