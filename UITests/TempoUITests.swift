@@ -106,8 +106,8 @@ final class TempoUITests: XCTestCase {
         tapIdentified("today.readiness.save")
 
         XCTAssertTrue(identifiedElement("health.check").waitForExistence(timeout: 5))
-        tapIdentifiedButton("health.check.confirmed")
-        tapIdentifiedButton("health.check.medicalFollowUp")
+        confirmIdentifiedToggle("health.check.confirmed")
+        confirmIdentifiedToggle("health.check.medicalFollowUp")
         tapIdentifiedButton("health.check.submit")
 
         XCTAssertTrue(app.tabBars.buttons["Hari Ini"].waitForExistence(timeout: 5))
@@ -165,16 +165,16 @@ final class TempoUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Nyeri"].exists)
         XCTAssertTrue(app.staticTexts["Keluhan saluran kemih"].exists)
 
-        confirmIdentifiedButton("health.check.confirmed")
-        XCTAssertEqual(app.buttons["health.check.confirmed"].value as? String, "Dikonfirmasi")
-        confirmIdentifiedButton("health.check.medicalFollowUp")
-        XCTAssertEqual(app.buttons["health.check.medicalFollowUp"].value as? String, "Dikonfirmasi")
+        confirmIdentifiedToggle("health.check.confirmed")
+        XCTAssertEqual(app.switches["health.check.confirmed"].value as? String, "Dikonfirmasi")
+        confirmIdentifiedToggle("health.check.medicalFollowUp")
+        XCTAssertEqual(app.switches["health.check.medicalFollowUp"].value as? String, "Dikonfirmasi")
         let submit = app.buttons["health.check.submit"]
         XCTAssertTrue(submit.waitForExistence(timeout: 5))
         XCTAssertFalse(submit.isEnabled)
 
-        confirmIdentifiedButton("health.check.confirmedAllActiveHoldsResolved")
-        XCTAssertEqual(app.buttons["health.check.confirmedAllActiveHoldsResolved"].value as? String, "Dikonfirmasi")
+        confirmIdentifiedToggle("health.check.confirmedAllActiveHoldsResolved")
+        XCTAssertEqual(app.switches["health.check.confirmedAllActiveHoldsResolved"].value as? String, "Dikonfirmasi")
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Siap"), object: submit)
         XCTAssertEqual(XCTWaiter().wait(for: [ready], timeout: 5), .completed)
         tapIdentifiedButton("health.check.submit")
@@ -309,14 +309,20 @@ final class TempoUITests: XCTestCase {
         button.tap()
     }
 
-    private func confirmIdentifiedButton(_ identifier: String) {
-        let button = app.buttons[identifier]
+    private func confirmIdentifiedToggle(_ identifier: String) {
+        let toggle = app.switches[identifier]
         for _ in 0..<3 {
-            if button.value as? String == "Dikonfirmasi" { return }
-            tapIdentifiedButton(identifier)
+            if toggle.value as? String == "Dikonfirmasi" { return }
+            for _ in 0..<3 {
+                if toggle.waitForExistence(timeout: 1), toggle.isHittable { break }
+                app.swipeUp()
+            }
+            XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+            XCTAssertTrue(toggle.isEnabled)
+            toggle.tap()
             let confirmed = XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "value == %@", "Dikonfirmasi"),
-                object: button
+                object: toggle
             )
             if XCTWaiter().wait(for: [confirmed], timeout: 2) == .completed { return }
         }

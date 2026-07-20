@@ -452,30 +452,24 @@ struct TempoHealthCheckScreen: View {
             }
             Section("Tanda keselamatan") {
                 SafetyScreeningFields(answers: $answers)
-                confirmationButton(
+                confirmationToggle(
                     "Saya sudah membaca dan menjawab semua bagian",
-                    isConfirmed: confirmedComplete,
+                    isConfirmed: $confirmedComplete,
                     identifier: "health.check.confirmed"
-                ) {
-                    confirmedComplete.toggle()
-                }
+                )
                 if requiresMedicalResolutionConfirmation && !hasSymptoms {
-                    confirmationButton(
+                    confirmationToggle(
                         "Gejala sudah hilang atau dinilai tenaga kesehatan",
-                        isConfirmed: confirmedMedicalFollowUp,
+                        isConfirmed: $confirmedMedicalFollowUp,
                         identifier: "health.check.medicalFollowUp"
-                    ) {
-                        confirmedMedicalFollowUp.toggle()
-                    }
+                    )
                 }
                 if history.requiresMultipleHoldConfirmation && !hasSymptoms {
-                    confirmationButton(
+                    confirmationToggle(
                         "Saya memastikan semua keluhan yang tercatat sudah hilang atau sudah dinilai tenaga kesehatan.",
-                        isConfirmed: confirmedAllActiveHoldsResolved,
+                        isConfirmed: $confirmedAllActiveHoldsResolved,
                         identifier: "health.check.confirmedAllActiveHoldsResolved"
-                    ) {
-                        confirmedAllActiveHoldsResolved.toggle()
-                    }
+                    )
                 }
             }
             Section {
@@ -519,28 +513,26 @@ struct TempoHealthCheckScreen: View {
         return "Safety hold aktif yang tersimpan masih memerlukan pemeriksaan ulang sebelum sesi dapat dimulai."
     }
 
-    private func confirmationButton(
+    private func confirmationToggle(
         _ title: String,
-        isConfirmed: Bool,
-        identifier: String,
-        action: @escaping () -> Void
+        isConfirmed: Binding<Bool>,
+        identifier: String
     ) -> some View {
-        Button(action: action) {
+        Toggle(isOn: isConfirmed) {
             HStack(alignment: .firstTextBaseline, spacing: TempoDesign.Spacing.sm) {
-                Image(systemName: isConfirmed ? "checkmark.circle.fill" : "circle")
+                Image(systemName: isConfirmed.wrappedValue ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
-                    .foregroundStyle(isConfirmed ? TempoDesign.Palette.accentSoft : TempoDesign.Palette.textSecondary)
+                    .foregroundStyle(isConfirmed.wrappedValue ? TempoDesign.Palette.accentSoft : TempoDesign.Palette.textSecondary)
                     .accessibilityHidden(true)
                 Text(title)
                     .foregroundStyle(TempoDesign.Palette.textPrimary)
                 Spacer(minLength: TempoDesign.Spacing.sm)
             }
         }
-        .buttonStyle(TempoTactileButtonStyle())
+        .tint(TempoDesign.Palette.accent)
         .accessibilityIdentifier(identifier)
         .accessibilityLabel(title)
-        .accessibilityValue(isConfirmed ? "Dikonfirmasi" : "Belum dikonfirmasi")
-        .accessibilityAddTraits(isConfirmed ? .isSelected : [])
+        .accessibilityValue(isConfirmed.wrappedValue ? "Dikonfirmasi" : "Belum dikonfirmasi")
     }
 
     private func save() {
