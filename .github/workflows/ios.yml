@@ -33,7 +33,17 @@ jobs:
           xcrun simctl bootstatus "$simulator_id" -b
       - name: Run focused hotfix UI tests
         run: |
-          xcodebuild test -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath "$PWD/build/DerivedData" CODE_SIGNING_ALLOWED=NO -only-testing:TempoUITests/TempoUITests/testManualPostponeOpensTheLinkedReplacement -only-testing:TempoUITests/TempoUITests/testMultipleSafetyHoldsNeedConfirmationBeforeClearRecheck
+          mkdir -p build/logs
+          set -o pipefail
+          xcodebuild test -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath "$PWD/build/DerivedData" CODE_SIGNING_ALLOWED=NO -only-testing:TempoUITests/TempoUITests/testManualPostponeOpensTheLinkedReplacement -only-testing:TempoUITests/TempoUITests/testMultipleSafetyHoldsNeedConfirmationBeforeClearRecheck 2>&1 | tee build/logs/focused-ui.log
+      - name: Upload review-branch diagnostic log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tempo-ux-review-diagnostics
+          path: build/logs
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Run iOS unit and UI tests
         run: |
           xcodebuild test -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath "$PWD/build/DerivedData" CODE_SIGNING_ALLOWED=NO
@@ -88,15 +98,14 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: Tempo-resign-ready-ipa
-          path: build
+          path: release-assets
       - name: Verify release checksum
-        run: shasum -a 256 -c Tempo-resign-ready.ipa.sha256
-        working-directory: build
+        run: (cd release-assets && sha256sum --check Tempo-resign-ready.ipa.sha256)
       - name: Publish sideload release
         uses: softprops/action-gh-release@v2
         with:
           name: TEMPO ${{ github.ref_name }}
           body_path: RELEASE_NOTES.md
           files: |
-            build/Tempo-resign-ready.ipa
-            build/Tempo-resign-ready.ipa.sha256
+            release-assets/Tempo-resign-ready.ipa
+            release-assets/Tempo-resign-ready.ipa.sha256
