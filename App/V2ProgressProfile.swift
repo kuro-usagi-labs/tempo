@@ -532,7 +532,6 @@ struct TempoHealthCheckScreen: View {
         .tint(TempoDesign.Palette.accent)
         .accessibilityIdentifier(identifier)
         .accessibilityLabel(title)
-        .accessibilityValue(isConfirmed.wrappedValue ? "Dikonfirmasi" : "Belum dikonfirmasi")
     }
 
     private func save() {

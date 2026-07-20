@@ -31,6 +31,9 @@ jobs:
           echo "id=$simulator_id" >> "$GITHUB_OUTPUT"
           xcrun simctl boot "$simulator_id" || true
           xcrun simctl bootstatus "$simulator_id" -b
+      - name: Run focused hotfix UI tests
+        run: |
+          xcodebuild test -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath "$PWD/build/DerivedData" CODE_SIGNING_ALLOWED=NO -only-testing:TempoUITests/TempoUITests/testManualPostponeOpensTheLinkedReplacement -only-testing:TempoUITests/TempoUITests/testMultipleSafetyHoldsNeedConfirmationBeforeClearRecheck
       - name: Run iOS unit and UI tests
         run: |
           xcodebuild test -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath "$PWD/build/DerivedData" CODE_SIGNING_ALLOWED=NO
