@@ -651,7 +651,7 @@ struct TempoProgramScreen: View {
     private var calendarStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: TempoDesign.Spacing.xs) {
-                ForEach(weekDays, id: \.self) { date in
+                ForEach(Array(weekDays.enumerated()), id: \.element) { index, date in
                     let isSelected = Calendar.current.isDate(date, inSameDayAs: selectedDay)
                     Button { selectedDay = date } label: {
                         VStack(spacing: 5) {
@@ -665,6 +665,7 @@ struct TempoProgramScreen: View {
                     }
                     .buttonStyle(TempoTactileButtonStyle())
                     .accessibilityLabel(date.formatted(.dateTime.weekday(.wide).day().month(.wide)))
+                    .accessibilityIdentifier("program.day.\(index)")
                 }
             }
         }

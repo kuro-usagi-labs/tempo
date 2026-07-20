@@ -442,7 +442,9 @@ final class TempoDomainTests: XCTestCase {
             adultConfirmed: true
         )
         XCTAssertTrue(history.saveBaseline(baseline))
-        guard let source = history.plannedDays.first(where: { $0.status.isActionable && $0.scheduleDate > .now }) else {
+        guard let source = history.plannedDays.first(where: {
+            $0.status.isActionable && $0.scheduleDate > .now && [.breathing, .recovery].contains($0.effectiveKind)
+        }) else {
             return XCTFail("Expected an actionable future plan item")
         }
 
@@ -451,7 +453,8 @@ final class TempoDomainTests: XCTestCase {
         let replacements = history.plannedDays.filter { $0.rescheduledFromID == source.id }
         XCTAssertEqual(storedSource?.status, .skipped)
         XCTAssertEqual(replacements.count, 1)
-        XCTAssertFalse(history.postponePlan(id: replacements[0].id))
+        guard let replacement = replacements.first else { return }
+        XCTAssertFalse(history.postponePlan(id: replacement.id))
         XCTAssertEqual(history.plannedDays.filter { $0.rescheduledFromID == source.id }.count, 1)
     }
 

@@ -483,6 +483,7 @@ struct TempoHealthCheckScreen: View {
                 Button(hasSymptoms ? "Simpan dan jeda latihan" : "Konfirmasi tidak ada gejala") { save() }
                     .disabled(!canSubmit)
                     .accessibilityIdentifier("health.check.submit")
+                    .accessibilityValue(canSubmit ? "Siap" : "Belum siap")
             }
         }
         .navigationTitle("Pemeriksaan")

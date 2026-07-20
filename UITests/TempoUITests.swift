@@ -137,6 +137,7 @@ final class TempoUITests: XCTestCase {
         completeOnboarding()
         app.tabBars.buttons["Program"].tap()
 
+        tapIdentified("program.day.2")
         tapIdentified("program.plan.actionable")
         XCTAssertTrue(identifiedElement("plan.detail.postpone").waitForExistence(timeout: 5))
         tapIdentified("plan.detail.postpone")
@@ -165,12 +166,17 @@ final class TempoUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Keluhan saluran kemih"].exists)
 
         tapIdentifiedButton("health.check.confirmed")
+        XCTAssertEqual(app.buttons["health.check.confirmed"].value as? String, "Dikonfirmasi")
         tapIdentifiedButton("health.check.medicalFollowUp")
+        XCTAssertEqual(app.buttons["health.check.medicalFollowUp"].value as? String, "Dikonfirmasi")
         let submit = app.buttons["health.check.submit"]
         XCTAssertTrue(submit.waitForExistence(timeout: 5))
         XCTAssertFalse(submit.isEnabled)
 
         tapIdentifiedButton("health.check.confirmedAllActiveHoldsResolved")
+        XCTAssertEqual(app.buttons["health.check.confirmedAllActiveHoldsResolved"].value as? String, "Dikonfirmasi")
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Siap"), object: submit)
+        XCTAssertEqual(XCTWaiter().wait(for: [ready], timeout: 5), .completed)
         tapIdentifiedButton("health.check.submit")
         let safetyStatus = app.staticTexts["profile.safety.status"]
         XCTAssertTrue(safetyStatus.waitForExistence(timeout: 5))
