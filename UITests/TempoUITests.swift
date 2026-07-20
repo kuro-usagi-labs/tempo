@@ -310,17 +310,38 @@ final class TempoUITests: XCTestCase {
 
     private func confirmIdentifiedToggle(_ identifier: String) {
         let toggle = app.switches[identifier]
-        for _ in 0..<3 {
-            if toggle.waitForExistence(timeout: 1), toggle.isHittable { break }
-            app.swipeUp()
+        let expectedStates = [
+            "health.check.confirmed": "lengkap true",
+            "health.check.medicalFollowUp": "medis true",
+            "health.check.confirmedAllActiveHoldsResolved": "semua true",
+        ]
+        guard let expectedState = expectedStates[identifier] else {
+            XCTFail("Unknown confirmation toggle: \(identifier)")
+            return
         }
-        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
-        XCTAssertTrue(toggle.isEnabled)
-        XCTAssertTrue(toggle.isHittable)
-        // A rightward gesture sets a native switch to ON idempotently. This is
-        // more reliable than tapping a fixed coordinate when Form rows move as
-        // conditional confirmation controls appear.
-        toggle.swipeRight()
+        let submit = app.buttons["health.check.submit"]
+
+        for _ in 0..<3 {
+            if String(describing: submit.value).contains(expectedState) { return }
+            for _ in 0..<3 {
+                if toggle.waitForExistence(timeout: 1), toggle.isHittable { break }
+                app.swipeUp()
+            }
+            XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+            XCTAssertTrue(toggle.isEnabled)
+            if toggle.frame.midY > app.frame.midY {
+                app.swipeUp()
+            }
+            XCTAssertTrue(toggle.isHittable)
+            toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+
+            let confirmed = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "value CONTAINS %@", expectedState),
+                object: submit
+            )
+            if XCTWaiter().wait(for: [confirmed], timeout: 2) == .completed { return }
+        }
+        XCTFail("Confirmation did not change state: \(identifier); submit=\(String(describing: submit.value))")
     }
 
     private func tapNavigationBarButton(_ label: String) {
