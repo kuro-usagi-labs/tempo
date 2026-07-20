@@ -59,13 +59,17 @@ struct TempoV2AppShell: View {
                 if onboardingCompleted, history.baseline != nil {
                     NavigationStack(path: $coordinator.path) {
                         TabView(selection: $coordinator.selectedTab) {
-                            TempoTodayScreen().tag(TempoTab.today)
+                            TempoV22TodayScreen()
+                                .tag(TempoTab.today)
                                 .tabItem { Label("Hari Ini", systemImage: "sparkles") }
-                            TempoProgramScreen().tag(TempoTab.program)
+                            TempoV22ProgramScreen()
+                                .tag(TempoTab.program)
                                 .tabItem { Label("Program", systemImage: "calendar") }
-                            TempoProgressScreen().tag(TempoTab.progress)
+                            TempoV22ProgressScreen()
+                                .tag(TempoTab.progress)
                                 .tabItem { Label("Progres", systemImage: "chart.line.uptrend.xyaxis") }
-                            TempoProfileScreen().tag(TempoTab.profile)
+                            TempoV22SettingsScreen()
+                                .tag(TempoTab.profile)
                                 .tabItem { Label("Pengaturan", systemImage: "gearshape.fill") }
                                 .accessibilityLabel("Pengaturan")
                         }
@@ -73,7 +77,7 @@ struct TempoV2AppShell: View {
                         .navigationDestination(for: TempoRoute.self) { TempoRouteDestination(route: $0) }
                     }
                 } else {
-                    TempoV2Onboarding()
+                    TempoV22Onboarding()
                 }
             }
             .environment(coordinator)
@@ -132,7 +136,9 @@ struct TempoV2AppShell: View {
         ZStack {
             TempoDesign.Palette.canvas.ignoresSafeArea()
             VStack(spacing: TempoDesign.Spacing.sm) {
-                Image(systemName: "circle.fill").font(.system(size: 30)).foregroundStyle(TempoDesign.Palette.accent)
+                Image(systemName: "circle.fill")
+                    .font(.system(size: 30))
+                    .foregroundStyle(TempoDesign.Palette.accent)
                 Text("TEMPO").font(TempoDesign.Typography.cardTitle)
             }
         }
@@ -172,10 +178,10 @@ struct TempoRouteDestination: View {
     @ViewBuilder
     var body: some View {
         switch route {
-        case let .plan(id): TempoPlanDetailScreen(planID: id)
+        case let .plan(id): TempoV22PlanDetailScreen(planID: id)
         case let .immediateAction(initialIntensity): TempoImmediateActionSheetScreen(initialIntensity: initialIntensity)
-        case let .guided(id): TempoGuidedSessionScreen(plannedDayID: id)
-        case let .privateSession(advisories): TempoPrivateSessionTimerScreen(advisories: advisories)
+        case let .guided(id): TempoV22GuidedSessionScreen(plannedDayID: id)
+        case let .privateSession(advisories): TempoV22PrivateSessionScreen(advisories: advisories)
         case let .guidedUnavailable(reason, message, nextAvailableAt):
             TempoGuidedUnavailableScreen(reason: reason, message: message, nextAvailableAt: nextAvailableAt)
         case let .safetyRecoveryBlock(reason, recheckDate):
