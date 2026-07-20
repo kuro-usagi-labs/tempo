@@ -144,10 +144,8 @@ final class TempoUITests: XCTestCase {
         app.launchArguments = ["-tempo-ui-testing-reset", "-tempo-ui-testing-multiple-safety-holds"]
         app.launch()
 
-        XCTAssertTrue(app.tabBars.buttons["Pengaturan"].waitForExistence(timeout: 5))
-        app.tabBars.buttons["Pengaturan"].tap()
-        tapButton("Keselamatan")
-        tapButton("Buka pemeriksaan")
+        XCTAssertTrue(app.tabBars.buttons["Hari Ini"].waitForExistence(timeout: 5))
+        tapButton("Periksa")
         XCTAssertTrue(identifiedElement("health.check.multipleHolds").waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Nyeri"].exists)
         XCTAssertTrue(app.staticTexts["Keluhan saluran kemih"].exists)
