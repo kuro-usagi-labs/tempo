@@ -316,7 +316,11 @@ final class TempoUITests: XCTestCase {
         }
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
         XCTAssertTrue(toggle.isEnabled)
-        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertTrue(toggle.isHittable)
+        // A rightward gesture sets a native switch to ON idempotently. This is
+        // more reliable than tapping a fixed coordinate when Form rows move as
+        // conditional confirmation controls appear.
+        toggle.swipeRight()
     }
 
     private func tapNavigationBarButton(_ label: String) {
