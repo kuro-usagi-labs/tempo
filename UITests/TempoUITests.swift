@@ -141,6 +141,40 @@ final class TempoUITests: XCTestCase {
         XCTAssertTrue(identifiedElement("plan.detail.postpone").waitForExistence(timeout: 5))
         tapIdentified("plan.detail.postpone")
         XCTAssertTrue(identifiedElement("plan.detail.replacement").waitForExistence(timeout: 5))
+        XCTAssertTrue(identifiedElement("plan.detail.alreadyRescheduled").waitForExistence(timeout: 5))
+        XCTAssertFalse(identifiedElement("plan.detail.postpone").exists)
+        XCTAssertFalse(app.alerts["Rencana belum dapat diubah"].exists)
+
+        let backButton = app.navigationBars.buttons.element(boundBy: 0)
+        XCTAssertTrue(backButton.waitForExistence(timeout: 5))
+        backButton.tap()
+        XCTAssertTrue(identifiedElement("program.plan.postponedSource").waitForExistence(timeout: 5))
+    }
+
+    func testMultipleSafetyHoldsNeedConfirmationBeforeClearRecheck() {
+        app.terminate()
+        app = XCUIApplication()
+        app.launchArguments = ["-tempo-ui-testing-reset", "-tempo-ui-testing-multiple-safety-holds"]
+        app.launch()
+
+        XCTAssertTrue(app.tabBars.buttons["Profil"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["Profil"].tap()
+        tapIdentified("profile.safety.open")
+        XCTAssertTrue(identifiedElement("health.check.multipleHolds").waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Nyeri"].exists)
+        XCTAssertTrue(app.staticTexts["Keluhan saluran kemih"].exists)
+
+        tapIdentifiedButton("health.check.confirmed")
+        tapIdentifiedButton("health.check.medicalFollowUp")
+        let submit = app.buttons["health.check.submit"]
+        XCTAssertTrue(submit.waitForExistence(timeout: 5))
+        XCTAssertFalse(submit.isEnabled)
+
+        tapIdentifiedButton("health.check.confirmedAllActiveHoldsResolved")
+        tapIdentifiedButton("health.check.submit")
+        let safetyStatus = app.staticTexts["profile.safety.status"]
+        XCTAssertTrue(safetyStatus.waitForExistence(timeout: 5))
+        XCTAssertTrue(safetyStatus.label.hasPrefix("Tidak ada safety hold aktif"))
     }
 
     func testImmediatePrivateRouteUsesThreeDecisionFlow() {

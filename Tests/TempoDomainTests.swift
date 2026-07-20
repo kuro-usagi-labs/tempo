@@ -367,7 +367,127 @@ final class TempoDomainTests: XCTestCase {
 
         XCTAssertEqual(history.activeSafetyHold?.severity, RecommendationSeverity.medical.rawValue)
         XCTAssertFalse(history.canResolveActiveSafetyHold)
+        XCTAssertFalse(history.resolveActiveSafetyHoldAfterClearRecheck(confirmedAllActiveHoldsResolved: true))
         XCTAssertTrue(history.hasSafetyBlock)
+    }
+
+    @MainActor
+    func testMultipleSafetyHoldsRequireExplicitConfirmationAndRemainInHistory() {
+        let history = LocalHistory()
+        _ = history.deleteAll()
+        defer { _ = history.deleteAll() }
+
+        XCTAssertTrue(history.recordSafetyHold(
+            reasonCode: "safety.daily-readiness-pain",
+            severity: RecommendationSeverity.medical.rawValue,
+            source: "test"
+        ))
+        XCTAssertTrue(history.recordSafetyHold(
+            reasonCode: "safety.daily-readiness-urinary-discharge",
+            severity: RecommendationSeverity.medical.rawValue,
+            source: "test"
+        ))
+
+        XCTAssertTrue(history.requiresMultipleHoldConfirmation)
+        XCTAssertEqual(Set(history.unresolvedSafetyHoldSummaries.map(\.title)), Set(["Nyeri", "Keluhan saluran kemih"]))
+        XCTAssertTrue(history.unresolvedSafetyHoldSummaries.allSatisfy { !$0.detail.contains("safety.") })
+        XCTAssertFalse(history.resolveActiveSafetyHoldAfterClearRecheck())
+        XCTAssertTrue(history.hasSafetyBlock)
+
+        XCTAssertTrue(history.resolveActiveSafetyHoldAfterClearRecheck(confirmedAllActiveHoldsResolved: true))
+        XCTAssertFalse(history.hasSafetyBlock)
+        XCTAssertEqual(history.safetyHoldCount, 2)
+        XCTAssertTrue(history.unresolvedSafetyHolds.isEmpty)
+    }
+
+    @MainActor
+    func testSafetyRecheckProfileWriteFailureRemainsFailClosed() {
+        let history = LocalHistory(safetyRecheckProfileStore: { _ in false })
+        _ = history.deleteAll()
+        defer { _ = history.deleteAll() }
+
+        XCTAssertTrue(history.recordSafetyHold(
+            reasonCode: "safety.daily-readiness-pain",
+            severity: RecommendationSeverity.medical.rawValue,
+            source: "test"
+        ))
+        XCTAssertFalse(history.resolveActiveSafetyHoldAfterClearRecheck())
+        XCTAssertTrue(history.hasSafetyBlock)
+        XCTAssertNotNil(history.activeSafetyHold)
+    }
+
+    @MainActor
+    func testPostponePersistsOneSourceAndOneReplacementAndRejectsAChain() {
+        let history = LocalHistory()
+        _ = history.deleteAll()
+        defer { _ = history.deleteAll() }
+        let baseline = LocalBaseline(
+            completedAt: .now,
+            onset: "Bertahap",
+            difficultyContext: "Keduanya",
+            perceivedControl: 5,
+            anxiety: 5,
+            sleepHours: 7,
+            activityLevel: "Ringan",
+            weeklyMovementMinutes: 60,
+            canWalkTwentyMinutes: true,
+            hasExerciseRestriction: false,
+            hasSafeActivitySpace: true,
+            preferredActivity: "Jalan santai",
+            activityPreference: .walking,
+            rushedHabit: false,
+            highStimulusPattern: false,
+            hasSafetySymptoms: false,
+            rulesetVersion: RulesetVersion.current.rawValue,
+            adultConfirmed: true
+        )
+        XCTAssertTrue(history.saveBaseline(baseline))
+        guard let source = history.plannedDays.first(where: { $0.status.isActionable && $0.scheduleDate > .now }) else {
+            return XCTFail("Expected an actionable future plan item")
+        }
+
+        XCTAssertTrue(history.postponePlan(id: source.id))
+        let storedSource = history.plannedDays.first { $0.id == source.id }
+        let replacements = history.plannedDays.filter { $0.rescheduledFromID == source.id }
+        XCTAssertEqual(storedSource?.status, .skipped)
+        XCTAssertEqual(replacements.count, 1)
+        XCTAssertFalse(history.postponePlan(id: replacements[0].id))
+        XCTAssertEqual(history.plannedDays.filter { $0.rescheduledFromID == source.id }.count, 1)
+    }
+
+    @MainActor
+    func testRefreshingWeekOnePlanDoesNotDuplicateHighStimulusEducation() {
+        let history = LocalHistory()
+        _ = history.deleteAll()
+        defer { _ = history.deleteAll() }
+        let baseline = LocalBaseline(
+            completedAt: .now,
+            onset: "Bertahap",
+            difficultyContext: "Keduanya",
+            perceivedControl: 5,
+            anxiety: 5,
+            sleepHours: 7,
+            activityLevel: "Ringan",
+            weeklyMovementMinutes: 60,
+            canWalkTwentyMinutes: true,
+            hasExerciseRestriction: false,
+            hasSafeActivitySpace: true,
+            preferredActivity: "Jalan santai",
+            activityPreference: .walking,
+            rushedHabit: false,
+            highStimulusPattern: true,
+            hasSafetySymptoms: false,
+            rulesetVersion: RulesetVersion.current.rawValue,
+            adultConfirmed: true
+        )
+        XCTAssertTrue(history.saveBaseline(baseline))
+        XCTAssertTrue(history.refreshPlan(force: true))
+        XCTAssertTrue(history.refreshPlan(force: true))
+        let resetRows = history.plannedDays.filter {
+            $0.reasonCodes?.contains(PlanReason.highStimulusReset.rawValue) == true
+        }
+        XCTAssertEqual(resetRows.count, 1)
+        XCTAssertEqual(Set(resetRows.map(\.id)).count, 1)
     }
 
     func testHistoricalReadinessTrendDoesNotPretendToBeToday() {

@@ -27,14 +27,50 @@ struct TempoApp: App {
     @State private var history: LocalHistory
 
     init() {
-        if ProcessInfo.processInfo.arguments.contains("-tempo-ui-testing-reset") {
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("-tempo-ui-testing-reset") {
             _ = ProtectedFileStore.removeAll()
             _ = SecureLocalStore.removeAll()
             if let bundleID = Bundle.main.bundleIdentifier {
                 UserDefaults.standard.removePersistentDomain(forName: bundleID)
             }
         }
-        _history = State(initialValue: LocalHistory())
+        let localHistory = LocalHistory()
+        if arguments.contains("-tempo-ui-testing-multiple-safety-holds") {
+            let baseline = LocalBaseline(
+                completedAt: .now,
+                onset: "Bertahap",
+                difficultyContext: "Keduanya",
+                perceivedControl: 5,
+                anxiety: 5,
+                sleepHours: 7,
+                activityLevel: "Ringan",
+                weeklyMovementMinutes: 60,
+                canWalkTwentyMinutes: true,
+                hasExerciseRestriction: false,
+                hasSafeActivitySpace: true,
+                preferredActivity: ActivityPreference.walking.legacyDisplayValue,
+                activityPreference: .walking,
+                rushedHabit: false,
+                highStimulusPattern: false,
+                hasSafetySymptoms: false,
+                rulesetVersion: RulesetVersion.current.rawValue,
+                adultConfirmed: true
+            )
+            _ = localHistory.saveBaseline(baseline)
+            _ = localHistory.recordSafetyHold(
+                reasonCode: "safety.daily-readiness-pain",
+                severity: RecommendationSeverity.medical.rawValue,
+                source: "ui-test"
+            )
+            _ = localHistory.recordSafetyHold(
+                reasonCode: "safety.daily-readiness-urinary-discharge",
+                severity: RecommendationSeverity.medical.rawValue,
+                source: "ui-test"
+            )
+            UserDefaults.standard.set(true, forKey: "onboardingCompleted")
+        }
+        _history = State(initialValue: localHistory)
     }
 
     var body: some Scene { WindowGroup { TempoV2AppShell().environment(history).preferredColorScheme(.dark) } }

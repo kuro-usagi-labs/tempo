@@ -31,15 +31,15 @@ jobs:
           echo "id=$simulator_id" >> "$GITHUB_OUTPUT"
           xcrun simctl boot "$simulator_id" || true
           xcrun simctl bootstatus "$simulator_id" -b
-      - name: Run iOS unit tests
+      - name: Run iOS unit and UI tests
         run: |
           xcodebuild test -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath "$PWD/build/DerivedData" CODE_SIGNING_ALLOWED=NO
       - name: Build iOS application
         run: |
-          xcodebuild build -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath "$PWD/build/DerivedData" CODE_SIGNING_ALLOWED=NO
+          xcodebuild build -project Tempo.xcodeproj -scheme Tempo -configuration Release -sdk iphonesimulator -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath "$PWD/build/DerivedData" CODE_SIGNING_ALLOWED=NO
       - name: Install and launch simulator smoke test
         run: |
-          app_path="build/DerivedData/Build/Products/Debug-iphonesimulator/Tempo.app"
+          app_path="build/DerivedData/Build/Products/Release-iphonesimulator/Tempo.app"
           test -d "$app_path"
           xcrun simctl install '${{ steps.simulator.outputs.id }}' "$app_path"
           xcrun simctl launch --terminate-running-process '${{ steps.simulator.outputs.id }}' labs.kurousagi.tempo

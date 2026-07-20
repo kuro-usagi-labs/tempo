@@ -1,15 +1,11 @@
-# TEMPO 2.1.2
+# TEMPO 2.1.3
 
-## Correctness hotfix
+## Focused hotfix
 
-- Health recheck yang bersih kini juga menandai keluhan readiness hari ini sebagai selesai, sehingga safety lock tidak berulang.
-- Daily readiness membedakan iritasi ringan, nyeri, keluhan saluran kemih/cairan tidak biasa, serta darah/demam dengan jalur keselamatan yang sesuai.
-- Readiness lama dipakai hanya sebagai tren; kondisi langsung hari ini memakai check-in hari ini atau perkiraan baseline yang netral.
-- Penundaan manual dan reschedule otomatis menggunakan pemeriksa batasan jadwal yang sama.
-- Batas guided rolling tujuh hari dihitung pada tanggal kandidat, dan aktivitas tertunda tidak lagi merusak skor konsistensi.
-- Kalender Program menampilkan nomor minggu yang sedang dilihat, tanpa mengubah minggu aktual.
-- Preferensi aktivitas dapat diubah dari Profil tanpa menghapus riwayat; hanya rencana masa depan yang belum disentuh yang diperbarui.
-- Flow dan helper V1 yang tidak lagi dipakai telah dikeluarkan dari target aplikasi. Data lama tetap dimigrasikan secara kompatibel.
+- Plan replacement tidak lagi menawarkan penundaan berulang.
+- Health recheck menjelaskan dan mengonfirmasi penyelesaian beberapa safety hold aktif.
+- Materi high-stimulus awal tidak lagi berulang pada minggu kedua.
+- Consistency membedakan pemulihan terjadwal dari pemulihan yang dikecualikan karena keselamatan atau kondisi harian.
 
 ## Sideload
 
