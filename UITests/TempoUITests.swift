@@ -123,9 +123,11 @@ final class TempoUITests: XCTestCase {
     }
 
     func testManualPostponeOpensTheLinkedReplacement() {
-        completeOnboarding()
+        app.terminate()
+        launch(arguments: ["-tempo-ui-testing-reset", "-tempo-ui-testing-postpone-plan"])
+
+        XCTAssertTrue(app.tabBars.buttons["Program"].waitForExistence(timeout: 5))
         app.tabBars.buttons["Program"].tap()
-        tapIdentifier("program.day.2")
         tapIdentifier("program.plan.actionable")
         tapIdentifier("plan.detail.postpone")
         tapButton("Cari satu slot aman")
@@ -252,16 +254,39 @@ final class TempoUITests: XCTestCase {
         XCTAssertTrue(toggle.isHittable, "Switch is not hittable: \(identifier)")
 
         if switchIsOn(toggle) != desired {
-            toggle.tap()
-            if !waitForSwitch(toggle, toEqual: desired, timeout: 2) {
-                toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)).tap()
+            if let title = switchTitle(for: identifier) {
+                let label = app.staticTexts[title]
+                if label.waitForExistence(timeout: 2), label.isHittable {
+                    label.tap()
+                } else {
+                    toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5)).tap()
+                }
+            } else {
+                toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5)).tap()
             }
+        }
+
+        if !waitForSwitch(toggle, toEqual: desired, timeout: 2) {
+            toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)).tap()
         }
 
         XCTAssertTrue(
             waitForSwitch(toggle, toEqual: desired, timeout: 3),
             "Switch \(identifier) did not change to \(desired ? "on" : "off"). Current value: \(String(describing: toggle.value))"
         )
+    }
+
+    private func switchTitle(for identifier: String) -> String? {
+        switch identifier {
+        case "health.check.confirmed":
+            return "Saya sudah membaca dan menjawab semua bagian"
+        case "health.check.medicalFollowUp":
+            return "Gejala sudah hilang atau dinilai tenaga kesehatan"
+        case "health.check.confirmedAllActiveHoldsResolved":
+            return "Saya memastikan semua keluhan yang tercatat sudah hilang atau sudah dinilai tenaga kesehatan."
+        default:
+            return nil
+        }
     }
 
     private func switchIsOn(_ toggle: XCUIElement) -> Bool {
