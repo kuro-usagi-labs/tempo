@@ -248,65 +248,39 @@ final class TempoUITests: XCTestCase {
     }
 
     private func setSwitch(_ identifier: String, to desired: Bool) {
-        let toggle = app.switches[identifier]
-        scrollUntilHittable(toggle)
-        XCTAssertTrue(toggle.waitForExistence(timeout: 5), "Missing switch: \(identifier)")
-        XCTAssertTrue(toggle.isHittable, "Switch is not hittable: \(identifier)")
+        let control = app.buttons[identifier]
+        scrollUntilHittable(control)
+        XCTAssertTrue(control.waitForExistence(timeout: 5), "Missing confirmation control: \(identifier)")
+        XCTAssertTrue(control.isHittable, "Confirmation control is not hittable: \(identifier)")
 
-        if switchIsOn(toggle) != desired {
-            if let title = switchTitle(for: identifier) {
-                let label = app.staticTexts[title]
-                if label.waitForExistence(timeout: 2), label.isHittable {
-                    label.tap()
-                } else {
-                    toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5)).tap()
-                }
-            } else {
-                toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5)).tap()
-            }
-        }
-
-        if !waitForSwitch(toggle, toEqual: desired, timeout: 2) {
-            toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)).tap()
+        if controlIsOn(control) != desired {
+            control.tap()
         }
 
         XCTAssertTrue(
-            waitForSwitch(toggle, toEqual: desired, timeout: 3),
-            "Switch \(identifier) did not change to \(desired ? "on" : "off"). Current value: \(String(describing: toggle.value))"
+            waitForControl(control, toEqual: desired, timeout: 3),
+            "Confirmation \(identifier) did not change to \(desired ? "on" : "off"). Current value: \(String(describing: control.value))"
         )
     }
 
-    private func switchTitle(for identifier: String) -> String? {
-        switch identifier {
-        case "health.check.confirmed":
-            return "Saya sudah membaca dan menjawab semua bagian"
-        case "health.check.medicalFollowUp":
-            return "Gejala sudah hilang atau dinilai tenaga kesehatan"
-        case "health.check.confirmedAllActiveHoldsResolved":
-            return "Saya memastikan semua keluhan yang tercatat sudah hilang atau sudah dinilai tenaga kesehatan."
-        default:
-            return nil
-        }
-    }
-
-    private func switchIsOn(_ toggle: XCUIElement) -> Bool {
-        if let number = toggle.value as? NSNumber {
+    private func controlIsOn(_ control: XCUIElement) -> Bool {
+        if let number = control.value as? NSNumber {
             return number.boolValue
         }
-        if let string = toggle.value as? String {
+        if let string = control.value as? String {
             let normalized = string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            return ["1", "true", "on", "yes"].contains(normalized)
+            return ["1", "true", "on", "yes", "dipilih"].contains(normalized)
         }
         return false
     }
 
-    private func waitForSwitch(_ toggle: XCUIElement, toEqual desired: Bool, timeout: TimeInterval) -> Bool {
+    private func waitForControl(_ control: XCUIElement, toEqual desired: Bool, timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
-            if switchIsOn(toggle) == desired { return true }
+            if controlIsOn(control) == desired { return true }
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         } while Date() < deadline
-        return switchIsOn(toggle) == desired
+        return controlIsOn(control) == desired
     }
 
     private func waitUntilEnabled(_ element: XCUIElement) {
