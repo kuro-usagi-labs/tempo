@@ -190,7 +190,7 @@ struct TempoRouteDestination: View {
         case let .strength(id): TempoStrengthCircuitScreen(plannedDayID: id)
         case let .breathing(id, title, seconds): TempoBreathingSessionScreen(plannedDayID: id, title: title, duration: seconds)
         case let .lesson(id, topic): TempoLessonScreen(plannedDayID: id, topic: topic)
-        case .healthCheck: TempoHealthCheckScreen()
+        case .healthCheck: TempoV22HealthCheckScreen()
         case .weeklyReview: TempoWeeklyReviewScreen()
         }
     }
