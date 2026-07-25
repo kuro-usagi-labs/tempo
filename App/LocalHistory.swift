@@ -1636,6 +1636,16 @@ final class LocalHistory {
         return true
     }
 
+    #if DEBUG
+    @discardableResult
+    func seedPlanForUITesting(_ days: [LocalPlanDay]) -> Bool {
+        guard planRepository.write(days) else { return false }
+        plannedDays = days.sorted { $0.scheduleDate < $1.scheduleDate }
+        publishPlanChanged()
+        return true
+    }
+    #endif
+
     func applyPendingPlanActions() {
         let key = "tempo.pending-skip-plan-date"
         guard let date = UserDefaults.standard.object(forKey: key) as? Date else { return }

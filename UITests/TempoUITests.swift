@@ -134,14 +134,13 @@ final class TempoUITests: XCTestCase {
     }
 
     func testManualPostponeOpensTheLinkedReplacement() {
-        completeOnboarding()
-        app.tabBars.buttons["Program"].tap()
+        app.terminate()
+        app = XCUIApplication()
+        app.launchArguments = ["-tempo-ui-testing-reset", "-tempo-ui-testing-postpone-plan"]
+        app.launch()
 
-        let nextWeek = app.buttons["program.week.next"]
-        XCTAssertTrue(nextWeek.waitForExistence(timeout: 5))
-        XCTAssertTrue(nextWeek.isEnabled)
-        nextWeek.tap()
-        tapIdentified("program.day.0")
+        XCTAssertTrue(app.tabBars.buttons["Program"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["Program"].tap()
         tapIdentified("program.plan.actionable")
         XCTAssertTrue(identifiedElement("plan.detail.postpone").waitForExistence(timeout: 5))
         tapIdentified("plan.detail.postpone")
