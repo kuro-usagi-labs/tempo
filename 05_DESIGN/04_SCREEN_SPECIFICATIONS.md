@@ -39,18 +39,19 @@ Full-screen four-step flow with one question at a time. Progress shown as four s
 ## 5. Guided session
 
 - Immersive dark background.
-- Large arousal dial.
+- Three large one-hand intensity zones.
 - Cycle count.
-- Hidden duration by default after Phase 2.
-- Bottom action row for stable/rising/almost too late.
+- Hidden duration throughout the active state.
+- Fixed bottom stop and almost-too-late actions; no scrolling in the active state.
 - Pause state transforms the entire screen.
 
 ## 6. Recovery screen
 
 - Breathing orb.
-- Countdown.
-- “Rate again” control.
-- No resume button until minimum pause time passes.
+- Remaining-time countdown.
+- The same three body-state zones used during the active state.
+- A clear explanation when resume is blocked by time or intensity.
+- Resume remains visibly disabled until minimum pause time passes and the calm zone is selected.
 
 ## 7. Progress
 

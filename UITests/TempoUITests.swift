@@ -219,7 +219,7 @@ final class TempoUITests: XCTestCase {
         XCTAssertTrue(identifiedElement("private.session.timer").waitForExistence(timeout: 5))
 
         tapButton("Mulai dengan pelan")
-        let threshold = identifiedElement("intensity.level.7")
+        let threshold = identifiedElement("intensity.zone.limit")
         XCTAssertTrue(threshold.waitForExistence(timeout: 5))
         threshold.tap()
         XCTAssertTrue(identifiedElement("private.pause.warning").waitForExistence(timeout: 5))
@@ -231,6 +231,79 @@ final class TempoUITests: XCTestCase {
         tapButton("Mulai dengan pelan")
         tapButton("Hampir keluar")
         XCTAssertTrue(identifiedElement("private.pause.warning").waitForExistence(timeout: 5))
+    }
+
+    func testPrivateActiveControlsStayFixedAndHittableWithoutScrolling() {
+        completeOnboarding()
+        completeImmediateFlow(choice: "Sesi privat")
+        tapButton("Mulai dengan pelan")
+
+        let active = identifiedElement("private.session.active.fixed")
+        let pause = app.buttons["session.pause.fixed"]
+        let emergency = app.buttons["session.emergency.fixed"]
+        XCTAssertTrue(active.waitForExistence(timeout: 5))
+        XCTAssertTrue(pause.waitForExistence(timeout: 5))
+        XCTAssertTrue(emergency.waitForExistence(timeout: 5))
+        XCTAssertTrue(pause.isHittable)
+        XCTAssertTrue(emergency.isHittable)
+        XCTAssertLessThanOrEqual(pause.frame.maxY, app.frame.maxY)
+        XCTAssertLessThanOrEqual(emergency.frame.maxY, app.frame.maxY)
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label MATCHES %@", "[0-9]+:[0-9]{2}")).element.exists)
+    }
+
+    func testPrivateRecoveryExplainsWhyContinueIsDisabled() {
+        completeOnboarding()
+        completeImmediateFlow(choice: "Sesi privat")
+        tapButton("Mulai dengan pelan")
+        app.buttons["session.pause.fixed"].tap()
+
+        let reason = identifiedElement("session.recovery.reason")
+        let continueButton = app.buttons["session.recovery.continue"]
+        XCTAssertTrue(reason.waitForExistence(timeout: 5))
+        XCTAssertTrue(reason.label.hasPrefix("Tunggu"))
+        XCTAssertTrue(continueButton.waitForExistence(timeout: 5))
+        XCTAssertFalse(continueButton.isEnabled)
+    }
+
+    func testPrivateBackgroundInterruptionReturnsInRecovery() {
+        completeOnboarding()
+        completeImmediateFlow(choice: "Sesi privat")
+        tapButton("Mulai dengan pelan")
+        XCTAssertTrue(identifiedElement("private.session.active.fixed").waitForExistence(timeout: 5))
+
+        XCUIDevice.shared.press(.home)
+        app.activate()
+
+        XCTAssertTrue(identifiedElement("private.recovery").waitForExistence(timeout: 5))
+    }
+
+    func testPrivateStorageFailureKeepsReflectionAndShowsRetry() {
+        app.terminate()
+        app = XCUIApplication()
+        app.launchArguments = ["-tempo-ui-testing-reset", "-tempo-ui-testing-private-store-failure"]
+        app.launch()
+        completeOnboarding()
+        completeImmediateFlow(choice: "Sesi privat")
+        tapButton("Mulai dengan pelan")
+        tapButton("Selesai")
+        tapButton("Simpan dan selesai")
+
+        XCTAssertTrue(app.alerts["Sesi belum tersimpan"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Coba lagi"].exists)
+    }
+
+    func testGuidedSessionUsesTheSameFixedControlsAndRecoveryFlow() {
+        completeOnboarding()
+        completeImmediateFlow(choice: "Sesi terpandu")
+        tapButton("Mulai persiapan")
+        tapButton("Saya siap lebih awal")
+
+        XCTAssertTrue(identifiedElement("guided.session.active.fixed").waitForExistence(timeout: 5))
+        let pause = app.buttons["session.pause.fixed"]
+        XCTAssertTrue(pause.isHittable)
+        pause.tap()
+        XCTAssertTrue(identifiedElement("guided.recovery").waitForExistence(timeout: 5))
+        XCTAssertTrue(identifiedElement("session.recovery.reason").exists)
     }
 
     private func completeOnboarding() {

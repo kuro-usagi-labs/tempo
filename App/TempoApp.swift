@@ -35,7 +35,9 @@ struct TempoApp: App {
                 UserDefaults.standard.removePersistentDomain(forName: bundleID)
             }
         }
-        let localHistory = LocalHistory()
+        let localHistory = arguments.contains("-tempo-ui-testing-private-store-failure")
+            ? LocalHistory(privateSessionStore: { _ in false })
+            : LocalHistory()
         if arguments.contains("-tempo-ui-testing-multiple-safety-holds") {
             let baseline = LocalBaseline(
                 completedAt: .now,
