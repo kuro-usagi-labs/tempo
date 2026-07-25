@@ -43,6 +43,79 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  review-ipa:
+    if: github.event_name == 'pull_request' && github.head_ref == 'codex/tempo-v2.2.0-ux-foundation-review'
+    runs-on: macos-15
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install project generator
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate
+      - name: Run deterministic domain tests
+        run: swift test
+      - name: Enforce local-only networking policy
+        run: |
+          ! rg --glob '*.swift' 'URLSession|NWConnection|Alamofire|Firebase|Analytics|CloudKit|OpenAI|Anthropic' App Sources
+      - name: Build ARM64 review archive
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project Tempo.xcodeproj \
+            -scheme Tempo \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -sdk iphoneos \
+            -archivePath "$PWD/build/Tempo-UX22-Review.xcarchive" \
+            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+      - name: Create review IPA
+        run: |
+          set -euo pipefail
+          app_path="build/Tempo-UX22-Review.xcarchive/Products/Applications/Tempo.app"
+          output="build/review-output"
+          test -d "$app_path"
+          test -f "$app_path/Info.plist"
+          test -f "$app_path/Tempo"
+          /usr/bin/codesign --force --deep --sign - --timestamp=none "$app_path"
+          /usr/bin/codesign --verify --deep --strict --verbose=2 "$app_path"
+          /usr/bin/file "$app_path/Tempo" | /usr/bin/grep -q arm64
+          mkdir -p "$output/Payload"
+          cp -R "$app_path" "$output/Payload/"
+          (cd "$output" && /usr/bin/zip -qry Tempo-UX22-review-resign-ready.ipa Payload)
+          /usr/bin/unzip -t "$output/Tempo-UX22-review-resign-ready.ipa"
+          (cd "$output" && shasum -a 256 Tempo-UX22-review-resign-ready.ipa > Tempo-UX22-review-resign-ready.ipa.sha256)
+          bundle_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app_path/Info.plist")
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_path/Info.plist")
+          build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app_path/Info.plist")
+          minimum_ios=$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$app_path/Info.plist")
+          cat > "$output/BUILD_INFO.txt" <<EOF
+          TEMPO UX 2.2 review build
+          Branch: $GITHUB_HEAD_REF
+          Commit: $GITHUB_SHA
+          Workflow run: $GITHUB_RUN_NUMBER
+          Bundle ID: $bundle_id
+          Version: $version
+          Build: $build
+          Minimum iOS: $minimum_ios
+
+          This IPA is re-sign-ready and must be re-signed before installation.
+          EOF
+      - name: Upload review IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tempo-UX22-review-ipa-${{ github.run_number }}
+          path: |
+            build/review-output/Tempo-UX22-review-resign-ready.ipa
+            build/review-output/Tempo-UX22-review-resign-ready.ipa.sha256
+            build/review-output/BUILD_INFO.txt
+          if-no-files-found: error
+          retention-days: 14
+
   test-and-package:
     runs-on: macos-15
     permissions:
