@@ -137,7 +137,11 @@ final class TempoUITests: XCTestCase {
         completeOnboarding()
         app.tabBars.buttons["Program"].tap()
 
-        tapIdentified("program.day.2")
+        let nextWeek = app.buttons["program.week.next"]
+        XCTAssertTrue(nextWeek.waitForExistence(timeout: 5))
+        XCTAssertTrue(nextWeek.isEnabled)
+        nextWeek.tap()
+        tapIdentified("program.day.0")
         tapIdentified("program.plan.actionable")
         XCTAssertTrue(identifiedElement("plan.detail.postpone").waitForExistence(timeout: 5))
         tapIdentified("plan.detail.postpone")
