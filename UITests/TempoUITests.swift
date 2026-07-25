@@ -172,7 +172,8 @@ final class TempoUITests: XCTestCase {
         setSwitch("health.check.confirmedAllActiveHoldsResolved", to: true)
         waitUntilEnabled(submit)
         submit.tap()
-        XCTAssertTrue(app.tabBars.buttons["Pengaturan"].waitForExistence(timeout: 5))
+        XCTAssertTrue(element("health.check").waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.tabBars.buttons["Hari Ini"].waitForExistence(timeout: 5))
     }
 
     private func launch(arguments: [String]) {
@@ -247,11 +248,37 @@ final class TempoUITests: XCTestCase {
     private func setSwitch(_ identifier: String, to desired: Bool) {
         let toggle = app.switches[identifier]
         scrollUntilHittable(toggle)
-        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
-        let current = (toggle.value as? String) == "1"
-        if current != desired {
-            toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5), "Missing switch: \(identifier)")
+        XCTAssertTrue(toggle.isHittable, "Switch is not hittable: \(identifier)")
+
+        if switchIsOn(toggle) != desired {
+            toggle.tap()
+            if !waitForSwitch(toggle, toEqual: desired, timeout: 2) {
+                toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)).tap()
+            }
         }
+
+        XCTAssertTrue(
+            waitForSwitch(toggle, toEqual: desired, timeout: 3),
+            "Switch \(identifier) did not change to \(desired ? "on" : "off"). Current value: \(String(describing: toggle.value))"
+        )
+    }
+
+    private func switchIsOn(_ toggle: XCUIElement) -> Bool {
+        if let number = toggle.value as? NSNumber {
+            return number.boolValue
+        }
+        let value = String(describing: toggle.value).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return ["1", "true", "on", "yes"].contains(value)
+    }
+
+    private func waitForSwitch(_ toggle: XCUIElement, toEqual desired: Bool, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if switchIsOn(toggle) == desired { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+        return switchIsOn(toggle) == desired
     }
 
     private func waitUntilEnabled(_ element: XCUIElement) {
