@@ -253,9 +253,34 @@ final class TempoUITests: XCTestCase {
         XCTAssertTrue(control.waitForExistence(timeout: 5), "Missing confirmation toggle: \(identifier)")
         XCTAssertTrue(control.isEnabled)
         XCTAssertTrue(control.isHittable)
-        if (control.value as? String) != "1" {
-            control.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+
+        if !switchIsOn(control) {
+            control.tap()
         }
+
+        XCTAssertTrue(
+            waitForSwitch(control, toEqual: true, timeout: 3),
+            "Confirmation toggle did not turn on: \(identifier). Current value: \(String(describing: control.value))"
+        )
+    }
+
+    private func switchIsOn(_ control: XCUIElement) -> Bool {
+        if let value = control.value as? String {
+            return ["1", "true", "on", "yes"].contains(value.lowercased())
+        }
+        if let value = control.value as? NSNumber {
+            return value.boolValue
+        }
+        return false
+    }
+
+    private func waitForSwitch(_ control: XCUIElement, toEqual desired: Bool, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if switchIsOn(control) == desired { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+        return switchIsOn(control) == desired
     }
 
     private func waitUntilEnabled(_ element: XCUIElement) {
