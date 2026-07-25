@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Review-branch health check with explicit, full-row confirmation controls.
-/// The persisted safety semantics remain in `LocalHistory`; this view only
-/// replaces an unreliable custom Toggle hit target.
+/// Review-branch health check using native SwiftUI confirmation controls.
+/// The persisted safety semantics remain in `LocalHistory`; this view keeps
+/// the interaction deterministic for users, VoiceOver, and XCUITest.
 struct TempoV22HealthCheckScreen: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(LocalHistory.self) private var history
@@ -60,14 +60,14 @@ struct TempoV22HealthCheckScreen: View {
             Section("Tanda keselamatan") {
                 SafetyScreeningFields(answers: $answers)
 
-                confirmationRow(
+                confirmationToggle(
                     "Saya sudah membaca dan menjawab semua bagian",
                     isConfirmed: $confirmedComplete,
                     identifier: "health.check.confirmed"
                 )
 
                 if requiresMedicalResolutionConfirmation && !hasSymptoms {
-                    confirmationRow(
+                    confirmationToggle(
                         "Gejala sudah hilang atau dinilai tenaga kesehatan",
                         isConfirmed: $confirmedMedicalFollowUp,
                         identifier: "health.check.medicalFollowUp"
@@ -75,7 +75,7 @@ struct TempoV22HealthCheckScreen: View {
                 }
 
                 if history.requiresMultipleHoldConfirmation && !hasSymptoms {
-                    confirmationRow(
+                    confirmationToggle(
                         "Saya memastikan semua keluhan yang tercatat sudah hilang atau sudah dinilai tenaga kesehatan.",
                         isConfirmed: $confirmedAllActiveHoldsResolved,
                         identifier: "health.check.confirmedAllActiveHoldsResolved"
@@ -130,34 +130,17 @@ struct TempoV22HealthCheckScreen: View {
         canSubmit ? "Siap" : "Belum siap. Lengkapi semua konfirmasi yang diperlukan."
     }
 
-    private func confirmationRow(
+    private func confirmationToggle(
         _ title: String,
         isConfirmed: Binding<Bool>,
         identifier: String
     ) -> some View {
-        Button {
-            isConfirmed.wrappedValue.toggle()
-        } label: {
-            HStack(alignment: .center, spacing: TempoDesign.Spacing.sm) {
-                Image(systemName: isConfirmed.wrappedValue ? "checkmark.circle.fill" : "circle")
-                    .font(.title3)
-                    .foregroundStyle(isConfirmed.wrappedValue ? TempoDesign.Palette.accentSoft : TempoDesign.Palette.textSecondary)
-                    .accessibilityHidden(true)
-
-                Text(title)
-                    .foregroundStyle(TempoDesign.Palette.textPrimary)
-                    .multilineTextAlignment(.leading)
-
-                Spacer(minLength: TempoDesign.Spacing.sm)
-            }
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier(identifier)
-        .accessibilityLabel(title)
-        .accessibilityValue(isConfirmed.wrappedValue ? "1" : "0")
-        .accessibilityHint("Ketuk untuk mengubah konfirmasi")
+        Toggle(title, isOn: isConfirmed)
+            .toggleStyle(.switch)
+            .tint(TempoDesign.Palette.accent)
+            .accessibilityIdentifier(identifier)
+            .accessibilityLabel(title)
+            .accessibilityHint("Aktifkan setelah pernyataan ini benar")
     }
 
     private func activeHoldReason(_ code: String) -> String {
