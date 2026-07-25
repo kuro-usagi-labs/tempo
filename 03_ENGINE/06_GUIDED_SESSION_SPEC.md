@@ -42,12 +42,14 @@ Ask:
 
 ## Active controls
 
-- arousal dial 1–10;
-- **Rising** button;
-- **Stable** button;
-- **Almost too late** button;
-- **Pause now** button;
-- **End session** button.
+- three large one-hand zones that preserve the internal 1–10 values:
+  - **Still calm** maps to 1–4;
+  - **Starting to rise** maps to 5–6;
+  - **Near the limit** maps to the adaptive threshold and starts the stop transition;
+- a fixed **Pause — hands off** button that never requires scrolling;
+- a fixed **Almost too late** button;
+- an always-available **Finish** action;
+- no visible duration while the active state is running.
 
 ## Threshold behavior
 
@@ -73,10 +75,12 @@ Immediate emergency pause presentation. No punitive language.
 
 ## Recovery
 
-- countdown range 30–120 seconds;
+- countdown range 30–120 seconds with the remaining wait shown explicitly;
 - animated breathing orb;
-- user periodically re-rates arousal;
-- resume only after reaching target level or choosing to end.
+- three body-state zones using the same control positions as the active state;
+- a disabled resume action that explains whether time or intensity is still blocking it;
+- resume only after reaching target level or choosing to end;
+- private and guided sessions use the same active and recovery controls.
 
 ## Completion
 

@@ -1,11 +1,15 @@
-# TEMPO 2.1.3
+# TEMPO 2.2.0
 
-## Focused hotfix
+## Start–stop flow
 
-- Plan replacement tidak lagi menawarkan penundaan berulang.
-- Health recheck menjelaskan dan mengonfirmasi penyelesaian beberapa safety hold aktif.
-- Materi high-stimulus awal tidak lagi berulang pada minggu kedua.
-- Consistency membedakan pemulihan terjadwal dari pemulihan yang dikecualikan karena keselamatan atau kondisi harian.
+- Layar aktif sesi privat dan terpandu kini tetap di satu layar tanpa scroll.
+- Timer disembunyikan selama fase aktif agar pengguna tidak mengejar durasi.
+- Check-in intensitas memakai tiga zona besar yang nyaman digunakan dengan satu tangan.
+- Tombol jeda dan hampir keluar selalu mudah dijangkau.
+- Recovery menampilkan hitung mundur dan alasan yang jelas sebelum sesi dapat dilanjutkan.
+- Refleksi pascasession dipersingkat tanpa menghilangkan pemeriksaan nyeri atau iritasi.
+- Sesi privat dan terpandu sekarang memakai pola kontrol aktif dan recovery yang konsisten.
+- Pengujian mencakup layout aktif, interupsi background, transisi recovery, dan kegagalan penyimpanan.
 
 ## Sideload
 

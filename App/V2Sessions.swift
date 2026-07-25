@@ -334,6 +334,227 @@ struct TempoIntensitySelector: View {
     }
 }
 
+enum SessionIntensityZone: String, CaseIterable, Identifiable, Equatable {
+    case calm
+    case rising
+    case limit
+
+    var id: String { rawValue }
+
+    func value(threshold: Int) -> Int {
+        switch self {
+        case .calm: 3
+        case .rising: max(5, min(6, threshold - 1))
+        case .limit: min(10, max(7, threshold))
+        }
+    }
+
+    static func selected(for value: Int, threshold: Int) -> SessionIntensityZone {
+        if value >= threshold { return .limit }
+        if value >= 5 { return .rising }
+        return .calm
+    }
+}
+
+private enum SessionIntensityMode: Equatable {
+    case active
+    case recovery
+}
+
+private struct TempoSessionIntensityZones: View {
+    @Binding var value: Int
+    let threshold: Int
+    let mode: SessionIntensityMode
+
+    var body: some View {
+        HStack(spacing: TempoDesign.Spacing.xs) {
+            ForEach(SessionIntensityZone.allCases) { zone in
+                let selected = SessionIntensityZone.selected(for: value, threshold: threshold) == zone
+                Button {
+                    value = zone.value(threshold: threshold)
+                } label: {
+                    VStack(spacing: 4) {
+                        Text(title(for: zone))
+                            .font(TempoDesign.Typography.cardTitle)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                        Text(detail(for: zone))
+                            .font(TempoDesign.Typography.caption)
+                            .foregroundStyle(selected ? Color.white.opacity(0.82) : TempoDesign.Palette.textSecondary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 68)
+                    .padding(.horizontal, 4)
+                    .foregroundStyle(selected ? Color.white : TempoDesign.Palette.textPrimary)
+                    .background(selected ? tint(for: zone) : TempoDesign.Palette.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(selected ? tint(for: zone) : TempoDesign.Palette.hairline, lineWidth: selected ? 2 : 1)
+                    }
+                }
+                .buttonStyle(TempoTactileButtonStyle())
+                .accessibilityIdentifier("intensity.zone.\(zone.rawValue)")
+                .accessibilityLabel(title(for: zone))
+                .accessibilityValue(selected ? "Dipilih" : "Tidak dipilih")
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(mode == .active ? "Zona intensitas saat ini" : "Kondisi tubuh saat pemulihan")
+    }
+
+    private func title(for zone: SessionIntensityZone) -> String {
+        switch (mode, zone) {
+        case (.active, .calm): "Masih tenang"
+        case (.active, .rising): "Mulai naik"
+        case (.active, .limit): "Dekat batas"
+        case (.recovery, .calm): "Sudah tenang"
+        case (.recovery, .rising): "Masih naik"
+        case (.recovery, .limit): "Masih tinggi"
+        }
+    }
+
+    private func detail(for zone: SessionIntensityZone) -> String {
+        switch zone {
+        case .calm: "1–4"
+        case .rising: "5–6"
+        case .limit: "\(max(7, threshold))+"
+        }
+    }
+
+    private func tint(for zone: SessionIntensityZone) -> Color {
+        switch zone {
+        case .calm: TempoDesign.Palette.positive
+        case .rising: TempoDesign.Palette.caution
+        case .limit: TempoDesign.Palette.critical
+        }
+    }
+}
+
+private struct TempoSessionActiveControls: View {
+    @Binding var intensity: Int
+    let threshold: Int
+    let onPause: () -> Void
+    let onEmergency: () -> Void
+
+    var body: some View {
+        VStack(spacing: TempoDesign.Spacing.sm) {
+            TempoSessionIntensityZones(value: $intensity, threshold: threshold, mode: .active)
+            Button(action: onPause) {
+                Label("JEDA — LEPAS TANGAN", systemImage: "pause.fill")
+                    .font(.title3.weight(.bold))
+                    .frame(maxWidth: .infinity, minHeight: 68)
+                    .foregroundStyle(Color.white)
+                    .background(TempoDesign.Palette.caution, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            }
+            .buttonStyle(TempoTactileButtonStyle())
+            .accessibilityIdentifier("session.pause.fixed")
+
+            Button(action: onEmergency) {
+                Label("Hampir keluar", systemImage: "hand.raised.fill")
+                    .font(TempoDesign.Typography.cardTitle)
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .foregroundStyle(TempoDesign.Palette.critical)
+                    .background(TempoDesign.Palette.critical.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(TempoDesign.Palette.critical.opacity(0.48), lineWidth: 1)
+                    }
+            }
+            .buttonStyle(TempoTactileButtonStyle())
+            .accessibilityIdentifier("session.emergency.fixed")
+        }
+    }
+}
+
+private struct TempoSessionRecoveryControls: View {
+    @Binding var intensity: Int
+    let threshold: Int
+    let elapsedSeconds: Int
+    let minimumSeconds: Int
+    let cycleCount: Int
+    let continueTitle: String
+    let onContinue: () -> Void
+    let onFinish: () -> Void
+
+    private var remainingSeconds: Int { max(0, minimumSeconds - elapsedSeconds) }
+    private var isCalm: Bool { intensity <= 4 }
+    private var isReady: Bool { remainingSeconds == 0 && isCalm }
+    private var blockedReason: String {
+        if remainingSeconds > 0 { return "Tunggu \(remainingSeconds) detik lagi" }
+        if !isCalm { return "Pilih “Sudah tenang” saat tubuh benar-benar siap" }
+        return "Tubuh sudah cukup tenang"
+    }
+
+    var body: some View {
+        VStack(spacing: TempoDesign.Spacing.sm) {
+            BreathingOrbView()
+                .frame(width: 76, height: 76)
+                .accessibilityHidden(true)
+            Text("Lepas tangan dan bernapas")
+                .font(TempoDesign.Typography.sectionTitle)
+                .multilineTextAlignment(.center)
+            Text(remainingSeconds > 0 ? "\(remainingSeconds)" : "Siap")
+                .font(.system(size: 44, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(isReady ? TempoDesign.Palette.positive : TempoDesign.Palette.caution)
+                .accessibilityLabel(remainingSeconds > 0 ? "\(remainingSeconds) detik tersisa" : "Waktu minimum selesai")
+            TempoSessionIntensityZones(value: $intensity, threshold: threshold, mode: .recovery)
+            Text(blockedReason)
+                .font(TempoDesign.Typography.supporting)
+                .foregroundStyle(isReady ? TempoDesign.Palette.positive : TempoDesign.Palette.textSecondary)
+                .multilineTextAlignment(.center)
+                .accessibilityIdentifier("session.recovery.reason")
+            TempoPrimaryButton(
+                isReady ? continueTitle : blockedReason,
+                icon: isReady ? "play.fill" : "hourglass",
+                isEnabled: isReady,
+                action: onContinue
+            )
+            .accessibilityIdentifier("session.recovery.continue")
+            TempoSecondaryButton("Cukup untuk hari ini", icon: "checkmark", tone: .positive, action: onFinish)
+                .accessibilityIdentifier("session.recovery.finish")
+            Text("\(cycleCount) putaran selesai")
+                .font(TempoDesign.Typography.caption)
+                .foregroundStyle(TempoDesign.Palette.textTertiary)
+        }
+        .accessibilityIdentifier("session.recovery.shared")
+    }
+}
+
+private enum PostSessionSymptom: String, CaseIterable, Identifiable, Hashable {
+    case none
+    case irritation
+    case pain
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .none: "Tidak ada"
+        case .irritation: "Iritasi"
+        case .pain: "Nyeri"
+        }
+    }
+}
+
+private struct TempoPostSessionSymptomPicker: View {
+    @Binding var selection: PostSessionSymptom
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: TempoDesign.Spacing.xs) {
+            Text("Ada nyeri atau iritasi?")
+                .font(TempoDesign.Typography.cardTitle)
+            Picker("Kondisi fisik setelah sesi", selection: $selection) {
+                ForEach(PostSessionSymptom.allCases) { symptom in
+                    Text(symptom.title).tag(symptom)
+                }
+            }
+            .pickerStyle(.segmented)
+            Text(selection == .none ? "Pilih sesuai kondisi tubuhmu sekarang." : "TEMPO akan menghentikan latihan dan membuka pemeriksaan.")
+                .font(TempoDesign.Typography.caption)
+                .foregroundStyle(selection == .none ? TempoDesign.Palette.textSecondary : TempoDesign.Palette.caution)
+        }
+    }
+}
+
 struct TempoPrivateSessionTimerScreen: View {
     let advisories: [ImmediateActionAdvisory]
     @Environment(LocalHistory.self) private var history
@@ -361,8 +582,7 @@ struct TempoPrivateSessionTimerScreen: View {
     @State private var note = ""
     @State private var tooFast = false
     @State private var stoppedIntentionally = true
-    @State private var painAfter = false
-    @State private var irritationAfter = false
+    @State private var symptomAfter: PostSessionSymptom = .none
     @State private var saveFailed = false
     @State private var warningReason: PrivatePauseReason?
     @State private var warningTask: Task<Void, Never>?
@@ -377,24 +597,33 @@ struct TempoPrivateSessionTimerScreen: View {
     var body: some View {
         ZStack {
             (phase == .warning ? Color(red: 0.32, green: 0.02, blue: 0.03) : TempoDesign.Palette.canvas).ignoresSafeArea()
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: TempoDesign.Spacing.lg) {
-                    Spacer(minLength: TempoDesign.Spacing.lg)
-                    if phase == .warning { warningContent }
-                    else {
-                        Image(systemName: phase == .recovery || phase == .paused ? "pause.circle.fill" : "hand.raised.fill")
+            if phase == .active {
+                privateActiveScreen
+            } else if phase == .warning {
+                warningContent
+                    .padding(TempoDesign.Spacing.lg)
+            } else if phase == .recovery {
+                privateRecoveryScreen
+                    .padding(TempoDesign.Spacing.lg)
+                    .frame(maxWidth: TempoDesign.readableContentWidth, maxHeight: .infinity)
+            } else {
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: TempoDesign.Spacing.lg) {
+                        Spacer(minLength: TempoDesign.Spacing.lg)
+                        Image(systemName: phase == .paused ? "pause.circle.fill" : "hand.raised.fill")
                             .font(.system(size: 52, weight: .semibold))
-                            .foregroundStyle(phase == .recovery || phase == .paused ? TempoDesign.Palette.caution : TempoDesign.Palette.accentSoft)
-                        Text(phase == .ready ? "Sesi privat" : tempoDuration(totalSessionSeconds))
-                            .font(phase == .ready ? TempoDesign.Typography.pageTitle : .system(size: 58, weight: .bold, design: .rounded))
-                            .monospacedDigit()
+                            .foregroundStyle(phase == .paused ? TempoDesign.Palette.caution : TempoDesign.Palette.accentSoft)
+                        if phase == .ready {
+                            Text("Sesi privat")
+                                .font(TempoDesign.Typography.pageTitle)
+                        }
                         Text(message).multilineTextAlignment(.center).foregroundStyle(TempoDesign.Palette.textSecondary)
                         content
+                        Spacer(minLength: TempoDesign.Spacing.lg)
                     }
-                    Spacer(minLength: TempoDesign.Spacing.lg)
+                    .frame(maxWidth: TempoDesign.readableContentWidth, minHeight: 620)
+                    .padding(TempoDesign.Spacing.lg)
                 }
-                .frame(maxWidth: TempoDesign.readableContentWidth, minHeight: 620)
-                .padding(TempoDesign.Spacing.lg)
             }
         }
         .toolbar(.hidden, for: .navigationBar)
@@ -409,6 +638,57 @@ struct TempoPrivateSessionTimerScreen: View {
         .onDisappear { warningTask?.cancel(); speaker.stopSpeaking(at: .immediate) }
         .alert("Sesi belum tersimpan", isPresented: $saveFailed) { Button("Coba lagi") { save() } } message: { Text("Pemulihan tidak akan dijadwalkan ulang sampai catatan lokal berhasil disimpan.") }
         .accessibilityIdentifier("private.session.timer")
+    }
+
+    private var privateActiveScreen: some View {
+        VStack(spacing: TempoDesign.Spacing.md) {
+            HStack {
+                TempoStatusBadge("Putaran \(cycleTracker.completedCycles + 1)", tone: .accent)
+                Spacer()
+                Button("Selesai") { phase = .reflection }
+                    .font(TempoDesign.Typography.supporting.weight(.semibold))
+                    .foregroundStyle(TempoDesign.Palette.textSecondary)
+                    .frame(minWidth: 64, minHeight: 44)
+                    .accessibilityIdentifier("private.session.finish")
+            }
+            Spacer(minLength: 4)
+            Image(systemName: "waveform.path")
+                .font(.system(size: 52, weight: .semibold))
+                .foregroundStyle(TempoDesign.Palette.accentSoft)
+                .accessibilityHidden(true)
+            Text("Ikuti ritme tubuhmu")
+                .font(TempoDesign.Typography.pageTitle)
+                .multilineTextAlignment(.center)
+            Text("Saat mulai mendekati batas, tandai zonanya atau langsung tekan jeda.")
+                .font(TempoDesign.Typography.supporting)
+                .foregroundStyle(TempoDesign.Palette.textSecondary)
+                .multilineTextAlignment(.center)
+            Spacer(minLength: 4)
+            TempoSessionActiveControls(
+                intensity: $intensity,
+                threshold: prescription.pauseThreshold,
+                onPause: manualPause,
+                onEmergency: emergencyPause
+            )
+        }
+        .frame(maxWidth: TempoDesign.readableContentWidth, maxHeight: .infinity)
+        .padding(.horizontal, TempoDesign.Spacing.lg)
+        .padding(.vertical, TempoDesign.Spacing.sm)
+        .accessibilityIdentifier("private.session.active.fixed")
+    }
+
+    private var privateRecoveryScreen: some View {
+        TempoSessionRecoveryControls(
+            intensity: $intensity,
+            threshold: prescription.pauseThreshold,
+            elapsedSeconds: currentRecoverySeconds,
+            minimumSeconds: prescription.recoverySeconds,
+            cycleCount: cycleTracker.completedCycles,
+            continueTitle: "Lanjutkan dengan pelan",
+            onContinue: resumeFromRecovery,
+            onFinish: { phase = .reflection }
+        )
+        .accessibilityIdentifier("private.recovery")
     }
 
     @ViewBuilder private var content: some View {
@@ -428,37 +708,18 @@ struct TempoPrivateSessionTimerScreen: View {
                     .accessibilityIdentifier("private.assistance.toggle")
                 if assistanceEnabled {
                     Toggle("Prompt suara lokal", isOn: $spokenPromptsEnabled).tint(TempoDesign.Palette.accent)
-                    Text("Ambang otomatis \(prescription.pauseThreshold)/10 · pemulihan minimal \(prescription.recoverySeconds) detik")
+                    Text("Zona batas mulai di \(prescription.pauseThreshold)/10 · pemulihan minimal \(prescription.recoverySeconds) detik")
                         .font(TempoDesign.Typography.caption).foregroundStyle(TempoDesign.Palette.textSecondary)
                 }
                 TempoPrimaryButton("Mulai dengan pelan", icon: "play.fill") { start() }
                 TempoSecondaryButton("Kembali", icon: "xmark", tone: .neutral) { dismiss() }
             }
         case .active:
-            VStack(spacing: TempoDesign.Spacing.md) {
-                if assistanceEnabled {
-                    TempoStatusBadge("Siklus \(cycleTracker.completedCycles + 1) · ambang \(prescription.pauseThreshold)/10", tone: .accent)
-                    TempoIntensitySelector(value: $intensity, accent: intensity >= prescription.pauseThreshold - 1 ? TempoDesign.Palette.caution : TempoDesign.Palette.accentSoft)
-                }
-                TempoPrimaryButton(assistanceEnabled ? "Jeda sekarang" : "Jeda", icon: "pause.fill") { manualPause() }
-                TempoSecondaryButton("Hampir keluar", icon: "hand.raised.fill", tone: .critical) { emergencyPause() }
-                Button("Akhiri sesi") { phase = .reflection }.foregroundStyle(TempoDesign.Palette.textSecondary).frame(minHeight: 44)
-            }
+            EmptyView()
         case .warning:
             EmptyView()
         case .recovery:
-            VStack(spacing: TempoDesign.Spacing.md) {
-                Text("Pulih \(tempoDuration(currentRecoverySeconds))").font(TempoDesign.Typography.sectionTitle).monospacedDigit()
-                Text("Total pemulihan \(tempoDuration(totalRecoverySeconds)) · \(cycleTracker.completedCycles) siklus").font(TempoDesign.Typography.caption).foregroundStyle(TempoDesign.Palette.textSecondary)
-                if cycleTracker.recoveryQualified {
-                    TempoStatusBadge("Siklus ini siap disimpan", tone: .positive, icon: "checkmark.circle.fill")
-                }
-                TempoIntensitySelector(value: $intensity, accent: TempoDesign.Palette.positive)
-                TempoPrimaryButton(canResume ? "Lanjutkan dengan pelan" : "Tunggu hingga siap", icon: "play.fill") { resumeFromRecovery() }
-                    .disabled(!canResume)
-                TempoSecondaryButton("Cukup untuk hari ini", icon: "checkmark", tone: .positive) { phase = .reflection }
-            }
-            .accessibilityIdentifier("private.recovery")
+            EmptyView()
         case .paused:
             VStack(spacing: TempoDesign.Spacing.sm) {
                 TempoPrimaryButton("Lanjut bila siap", icon: "play.fill") { phase = .active }
@@ -472,13 +733,10 @@ struct TempoPrivateSessionTimerScreen: View {
                     Text("Masih tegang").tag("Masih tegang")
                     Text("Butuh istirahat").tag("Butuh istirahat")
                 }.pickerStyle(.segmented)
-                Toggle("Terasa terlalu cepat", isOn: $tooFast).tint(TempoDesign.Palette.caution)
-                Toggle("Berhenti dengan sengaja", isOn: $stoppedIntentionally).tint(TempoDesign.Palette.accent)
-                Toggle("Ada nyeri", isOn: $painAfter).tint(TempoDesign.Palette.critical)
-                Toggle("Ada iritasi", isOn: $irritationAfter).tint(TempoDesign.Palette.caution)
+                TempoPostSessionSymptomPicker(selection: $symptomAfter)
                 Toggle("Simpan catatan opsional", isOn: $saveDetails).tint(TempoDesign.Palette.accent)
                 if saveDetails { TextField("Catatan singkat", text: $note, axis: .vertical).textFieldStyle(.roundedBorder) }
-                TempoPrimaryButton("Simpan dan pulih", icon: "checkmark") { save() }
+                TempoPrimaryButton("Simpan dan selesai", icon: "checkmark") { save() }
             }
             .padding(TempoDesign.Spacing.md)
             .background(TempoDesign.Palette.surface, in: RoundedRectangle(cornerRadius: TempoDesign.Radius.medium, style: .continuous))
@@ -490,7 +748,7 @@ struct TempoPrivateSessionTimerScreen: View {
     private var warningContent: some View {
         VStack(spacing: TempoDesign.Spacing.lg) {
             Image(systemName: "hand.raised.fill").font(.system(size: 76, weight: .bold)).foregroundStyle(.white)
-            Text(warningReason == .emergency ? "DARURAT — BERHENTI SEKARANG" : "STOP — LEPAS TANGAN")
+            Text(warningReason == .emergency ? "STOP SEKARANG — LEPAS TANGAN" : "STOP — LEPAS TANGAN")
                 .font(.system(size: 31, weight: .black, design: .rounded))
                 .foregroundStyle(.white)
                 .multilineTextAlignment(.center)
@@ -590,7 +848,7 @@ struct TempoPrivateSessionTimerScreen: View {
         warningTask = Task { @MainActor in
             // Keep this red warning brief, but give VoiceOver and UI automation
             // enough time to perceive it before the recovery screen replaces it.
-            try? await Task.sleep(for: .milliseconds(1_500))
+            try? await Task.sleep(for: .seconds(1))
             guard !Task.isCancelled, phase == .warning else { return }
             beginRecovery(for: reason)
         }
@@ -637,6 +895,8 @@ struct TempoPrivateSessionTimerScreen: View {
 
     private func save() {
         guard let startedAt else { dismiss(); return }
+        let painAfter = symptomAfter == .pain
+        let irritationAfter = symptomAfter == .irritation
         if painAfter || irritationAfter {
             let reason = painAfter ? "safety.private-session-pain" : "safety.private-session-irritation"
             let severity = painAfter ? RecommendationSeverity.urgent.rawValue : RecommendationSeverity.caution.rawValue
@@ -688,10 +948,8 @@ struct TempoGuidedSessionScreen: View {
     @State private var preAnxiety = 3
     @State private var eligibilityMessage: String?
     @State private var showReflection = false
-    @State private var postAnxiety = 3
-    @State private var postTension = 3
-    @State private var painAfter = false
-    @State private var irritationAfter = false
+    @State private var postFeeling = "Lebih tenang"
+    @State private var symptomAfter: PostSessionSymptom = .none
     @State private var saveFailed = false
     @State private var saved = false
     @State private var sessionPersisted = false
@@ -701,6 +959,7 @@ struct TempoGuidedSessionScreen: View {
     @State private var pendingPauseIntensity = 3
     @State private var warningTask: Task<Void, Never>?
     @State private var warningPulse = false
+    @State private var recoveryReadyNotified = false
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     init(plannedDayID: UUID? = nil) { self.plannedDayID = plannedDayID }
@@ -708,26 +967,104 @@ struct TempoGuidedSessionScreen: View {
     var body: some View {
         ZStack {
             background
-            VStack(spacing: TempoDesign.Spacing.lg) {
-                header
-                Spacer(minLength: 0)
-                if let eligibilityMessage { blocked(eligibilityMessage) }
-                else if showReflection { reflection }
-                else { stateContent }
-                Spacer(minLength: 0)
-                if eligibilityMessage == nil && !showReflection && !machine.isTerminal { footer }
+            if eligibilityMessage == nil, !showReflection, isImmersiveState {
+                guidedImmersiveContent
+            } else {
+                VStack(spacing: TempoDesign.Spacing.lg) {
+                    header
+                    Spacer(minLength: 0)
+                    if let eligibilityMessage { blocked(eligibilityMessage) }
+                    else if showReflection { reflection }
+                    else { stateContent }
+                    Spacer(minLength: 0)
+                    if eligibilityMessage == nil && !showReflection && !machine.isTerminal { footer }
+                }
+                .frame(maxWidth: TempoDesign.readableContentWidth, maxHeight: .infinity)
+                .padding(TempoDesign.Spacing.lg)
             }
-            .frame(maxWidth: TempoDesign.readableContentWidth, maxHeight: .infinity)
-            .padding(TempoDesign.Spacing.lg)
         }
         .toolbar(.hidden, for: .navigationBar)
         .onAppear { configure() }
         .onDisappear { warningTask?.cancel() }
         .onReceive(ticker) { now in tick(now) }
-        .onChange(of: intensity) { _, level in handleIntensityChange(level) }
+        .onChange(of: intensity) { _, level in
+            handleIntensityChange(level)
+            notifyRecoveryReadyIfNeeded()
+        }
         .onChange(of: scenePhase) { _, phase in handleScenePhase(phase) }
         .alert("Sesi belum tersimpan", isPresented: $saveFailed) { Button("Coba lagi") { saveSession() } } message: { Text("TEMPO mempertahankan status rencana sampai catatan sesi tersimpan lokal.") }
         .accessibilityIdentifier("guided.session")
+    }
+
+    private var isImmersiveState: Bool {
+        [.activeLow, .activeRising, .warning, .pausedRecovery].contains(machine.state)
+    }
+
+    @ViewBuilder private var guidedImmersiveContent: some View {
+        switch machine.state {
+        case .activeLow, .activeRising:
+            VStack(spacing: TempoDesign.Spacing.md) {
+                HStack {
+                    TempoStatusBadge("Putaran \(machine.cycles + 1) dari \(machine.maximumCycles)", tone: .accent)
+                    Spacer()
+                    Button("Selesai") { finishEarly() }
+                        .font(TempoDesign.Typography.supporting.weight(.semibold))
+                        .foregroundStyle(TempoDesign.Palette.textSecondary)
+                        .frame(minWidth: 64, minHeight: 44)
+                        .accessibilityIdentifier("guided.session.finish")
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "waveform.path")
+                    .font(.system(size: 52, weight: .semibold))
+                    .foregroundStyle(TempoDesign.Palette.accentSoft)
+                    .accessibilityHidden(true)
+                Text("Ikuti ritme tubuhmu")
+                    .font(TempoDesign.Typography.pageTitle)
+                    .multilineTextAlignment(.center)
+                Text("Tandai saat intensitas berubah. TEMPO memulai jeda ketika kamu memilih zona batas.")
+                    .font(TempoDesign.Typography.supporting)
+                    .foregroundStyle(TempoDesign.Palette.textSecondary)
+                    .multilineTextAlignment(.center)
+                Spacer(minLength: 4)
+                TempoSessionActiveControls(
+                    intensity: $intensity,
+                    threshold: prescription.pauseThreshold,
+                    onPause: { beginRecovery(reason: .manual) },
+                    onEmergency: { beginRecovery(reason: .almostTooLate) }
+                )
+            }
+            .frame(maxWidth: TempoDesign.readableContentWidth, maxHeight: .infinity)
+            .padding(.horizontal, TempoDesign.Spacing.lg)
+            .padding(.vertical, TempoDesign.Spacing.sm)
+            .accessibilityIdentifier("guided.session.active.fixed")
+        case .warning:
+            warning
+                .padding(TempoDesign.Spacing.lg)
+        case .pausedRecovery:
+            TempoSessionRecoveryControls(
+                intensity: $intensity,
+                threshold: prescription.pauseThreshold,
+                elapsedSeconds: currentRecoverySeconds,
+                minimumSeconds: prescription.recoverySeconds,
+                cycleCount: machine.cycles,
+                continueTitle: willCompleteAfterRecovery ? "Lanjut ke refleksi" : "Lanjutkan dengan pelan",
+                onContinue: continueGuidedAfterRecovery,
+                onFinish: finishGuidedFromRecovery
+            )
+            .frame(maxWidth: TempoDesign.readableContentWidth, maxHeight: .infinity)
+            .padding(TempoDesign.Spacing.lg)
+            .accessibilityIdentifier("guided.recovery")
+        default:
+            EmptyView()
+        }
+    }
+
+    private var recoveryIsReady: Bool {
+        currentRecoverySeconds >= prescription.recoverySeconds && intensity <= 4
+    }
+
+    private var willCompleteAfterRecovery: Bool {
+        machine.lastPauseReason != .interruption && machine.cycles + 1 >= machine.maximumCycles
     }
 
     private var background: some View {
@@ -760,9 +1097,9 @@ struct TempoGuidedSessionScreen: View {
         switch machine.state {
         case .precheck: precheck
         case .prepare: preparation
-        case .activeLow, .activeRising: active
+        case .activeLow, .activeRising: EmptyView()
         case .warning: warning
-        case .pausedRecovery: recovery
+        case .pausedRecovery: EmptyView()
         case .resumeReady: resume
         case .completed, .earlyCompletion, .timeLimitReached: completed
         case .cancelled, .safetyAbort: cancelled
@@ -791,26 +1128,6 @@ struct TempoGuidedSessionScreen: View {
         }
     }
 
-    private var active: some View {
-        VStack(spacing: TempoDesign.Spacing.lg) {
-            ZStack {
-                Circle().stroke(TempoDesign.Palette.surfaceElevated, lineWidth: 14)
-                Circle().trim(from: 0, to: min(1, Double(activeElapsed) / Double(prescription.activeTargetSeconds)))
-                    .stroke(TempoDesign.Palette.accentSoft, style: StrokeStyle(lineWidth: 14, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                VStack { Text("Aktif").font(TempoDesign.Typography.caption); Text(tempoDuration(activeElapsed)).font(.title2.bold().monospacedDigit()) }
-            }
-            .frame(width: 150, height: 150)
-            TempoStatusBadge("Siklus \(machine.cycles + 1) dari \(machine.maximumCycles)", tone: .accent)
-            Text("Ikuti ritme yang ringan.").font(TempoDesign.Typography.pageTitle).multilineTextAlignment(.center)
-            Text("Check-in angka ini kapan pun berubah. Ambang otomatis akan mengaktifkan peringatan dan jeda.")
-                .foregroundStyle(TempoDesign.Palette.textSecondary).multilineTextAlignment(.center)
-            TempoIntensitySelector(value: $intensity, accent: TempoDesign.Palette.accentSoft)
-            TempoSecondaryButton("Jeda sekarang", icon: "pause.fill", tone: .caution) { beginRecovery(reason: .manual) }
-            TempoSecondaryButton("Hampir keluar", icon: "hand.raised.fill", tone: .critical) { beginRecovery(reason: .almostTooLate) }
-        }
-    }
-
     private var warning: some View {
         VStack(spacing: TempoDesign.Spacing.lg) {
             ZStack {
@@ -828,18 +1145,6 @@ struct TempoGuidedSessionScreen: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Peringatan. Berhenti sekarang dan mulai pemulihan.")
         .accessibilityAddTraits(.isHeader)
-    }
-
-    private var recovery: some View {
-        VStack(spacing: TempoDesign.Spacing.lg) {
-            Image(systemName: "leaf.fill").font(.system(size: 52)).foregroundStyle(TempoDesign.Palette.positive)
-            Text("Pemulihan").font(TempoDesign.Typography.pageTitle)
-            Text("\(tempoDuration(max(0, prescription.recoverySeconds - currentRecoverySeconds)))").font(.system(size: 56, weight: .bold, design: .rounded)).monospacedDigit()
-            Text("Total pemulihan \(tempoDuration(totalRecoverySeconds))").font(TempoDesign.Typography.caption).foregroundStyle(TempoDesign.Palette.textSecondary)
-            Text("Pilih angka di bawah 5 hanya bila tubuh benar-benar lebih tenang.").foregroundStyle(TempoDesign.Palette.textSecondary).multilineTextAlignment(.center)
-            TempoIntensitySelector(value: $intensity, accent: TempoDesign.Palette.positive)
-            TempoPrimaryButton("Periksa kesiapan", icon: "checkmark") { recover() }
-        }
     }
 
     private var resume: some View {
@@ -900,10 +1205,14 @@ struct TempoGuidedSessionScreen: View {
         VStack(alignment: .leading, spacing: TempoDesign.Spacing.md) {
             Text("Refleksi singkat").font(TempoDesign.Typography.pageTitle)
             Text("Catat seperlunya. Sinyal nyeri atau iritasi akan membuka safety hold.").foregroundStyle(TempoDesign.Palette.textSecondary)
-            reflectionPicker("Kecemasan setelah", value: $postAnxiety)
-            reflectionPicker("Ketegangan setelah", value: $postTension)
-            Toggle("Ada nyeri setelah sesi", isOn: $painAfter).tint(TempoDesign.Palette.critical)
-            Toggle("Ada iritasi setelah sesi", isOn: $irritationAfter).tint(TempoDesign.Palette.caution)
+            Text("Bagaimana kondisi tubuhmu sekarang?").font(TempoDesign.Typography.cardTitle)
+            Picker("Kondisi setelah sesi", selection: $postFeeling) {
+                Text("Lebih tenang").tag("Lebih tenang")
+                Text("Masih tegang").tag("Masih tegang")
+                Text("Butuh istirahat").tag("Butuh istirahat")
+            }
+            .pickerStyle(.segmented)
+            TempoPostSessionSymptomPicker(selection: $symptomAfter)
             TempoPrimaryButton("Simpan sesi", icon: "checkmark") { saveSession() }
         }
         .padding(TempoDesign.Spacing.md)
@@ -933,6 +1242,7 @@ struct TempoGuidedSessionScreen: View {
         let previousState = machine.state
         machine.beginActive()
         guard [.activeLow, .activeRising].contains(machine.state), previousState != machine.state else { return }
+        recoveryReadyNotified = false
         arousalEvents.append(LocalArousalEvent(
             timestampOffset: totalElapsed,
             level: intensity,
@@ -958,6 +1268,7 @@ struct TempoGuidedSessionScreen: View {
         case .pausedRecovery:
             currentRecoverySeconds += 1
             totalRecoverySeconds += 1
+            notifyRecoveryReadyIfNeeded()
         default: break
         }
         machine.updateElapsed(totalSeconds: totalElapsed)
@@ -972,12 +1283,14 @@ struct TempoGuidedSessionScreen: View {
         if reason == .almostTooLate { startWarningTransition() }
         else {
             currentRecoverySeconds = 0
+            recoveryReadyNotified = false
             if hapticsEnabled { TempoFeedback.impact(.medium) }
         }
     }
     private func recover() {
         let previousState = machine.state
         let previousCycles = machine.cycles
+        let shouldConfirmWithHaptic = !recoveryReadyNotified
         machine.recovered(level: intensity, elapsedSeconds: currentRecoverySeconds, minimumSeconds: prescription.recoverySeconds)
         guard previousState == .pausedRecovery, machine.state != .pausedRecovery else { return }
         pauseCycles.append(LocalPauseCycle(
@@ -991,10 +1304,38 @@ struct TempoGuidedSessionScreen: View {
         ))
         pendingPauseStart = nil
         currentRecoverySeconds = 0
-        if hapticsEnabled { TempoFeedback.notification(.success) }
+        if hapticsEnabled, shouldConfirmWithHaptic { TempoFeedback.notification(.success) }
     }
+
+    private func continueGuidedAfterRecovery() {
+        guard recoveryIsReady else { return }
+        recover()
+        if machine.state == .completed {
+            showReflection = true
+        } else if machine.state == .resumeReady {
+            beginActive()
+        }
+    }
+
+    private func finishGuidedFromRecovery() {
+        if recoveryIsReady { recover() }
+        if machine.state == .completed {
+            showReflection = true
+        } else {
+            finishEarly()
+        }
+    }
+
     private func saveSession() {
         guard !saved else { dismiss(); return }
+        let painAfter = symptomAfter == .pain
+        let irritationAfter = symptomAfter == .irritation
+        let postScore: Int
+        switch postFeeling {
+        case "Masih tegang": postScore = 6
+        case "Butuh istirahat": postScore = 8
+        default: postScore = 3
+        }
         if !sessionPersisted {
             finalizePendingPauseIfNeeded()
             guard history.addSession(
@@ -1007,11 +1348,11 @@ struct TempoGuidedSessionScreen: View {
                 preAnxiety: preAnxiety,
                 durationSeconds: totalElapsed,
                 lateStopOccurred: machine.lateStopOccurred,
-                postAnxiety: postAnxiety,
-                postTension: postTension,
+                postAnxiety: postScore,
+                postTension: postScore,
                 painAfter: painAfter,
                 irritationAfter: irritationAfter,
-                outcome: machine.state.rawValue,
+                outcome: postFeeling,
                 arousalEvents: arousalEvents,
                 pauseCycles: pauseCycles,
                 activeSeconds: activeElapsed,
@@ -1044,8 +1385,15 @@ struct TempoGuidedSessionScreen: View {
             try? await Task.sleep(for: .seconds(1))
             guard !Task.isCancelled, machine.advanceWarningToRecovery() else { return }
             currentRecoverySeconds = 0
+            recoveryReadyNotified = false
             warningPulse = false
         }
+    }
+
+    private func notifyRecoveryReadyIfNeeded() {
+        guard recoveryIsReady, !recoveryReadyNotified else { return }
+        recoveryReadyNotified = true
+        if hapticsEnabled { TempoFeedback.notification(.success) }
     }
 
     private func finishEarly() {

@@ -35,7 +35,50 @@ struct TempoApp: App {
                 UserDefaults.standard.removePersistentDomain(forName: bundleID)
             }
         }
-        let localHistory = LocalHistory()
+        let localHistory = arguments.contains("-tempo-ui-testing-private-store-failure")
+            ? LocalHistory(privateSessionStore: { _ in false })
+            : LocalHistory()
+        #if DEBUG
+        if arguments.contains("-tempo-ui-testing-postpone-plan") {
+            let now = Date.now
+            let baseline = LocalBaseline(
+                completedAt: now,
+                onset: "Bertahap",
+                difficultyContext: "Keduanya",
+                perceivedControl: 5,
+                anxiety: 5,
+                sleepHours: 7,
+                activityLevel: "Ringan",
+                weeklyMovementMinutes: 60,
+                canWalkTwentyMinutes: true,
+                hasExerciseRestriction: false,
+                hasSafeActivitySpace: true,
+                preferredActivity: ActivityPreference.walking.legacyDisplayValue,
+                activityPreference: .walking,
+                rushedHabit: false,
+                highStimulusPattern: false,
+                hasSafetySymptoms: false,
+                rulesetVersion: RulesetVersion.current.rawValue,
+                adultConfirmed: true
+            )
+            _ = localHistory.saveBaseline(baseline)
+            let calendar = Calendar.current
+            let scheduledAt = calendar.date(byAdding: .hour, value: 1, to: now) ?? now
+            let fixture = LocalPlanDay(
+                id: UUID(),
+                date: calendar.startOfDay(for: now),
+                kind: .education,
+                status: .planned,
+                phase: .awareness,
+                generatedAt: now,
+                rulesetVersion: RulesetVersion.current.rawValue,
+                scheduledAt: scheduledAt,
+                estimatedMinutes: 5
+            )
+            _ = localHistory.seedPlanForUITesting([fixture])
+            UserDefaults.standard.set(true, forKey: "onboardingCompleted")
+        }
+        #endif
         if arguments.contains("-tempo-ui-testing-multiple-safety-holds") {
             let baseline = LocalBaseline(
                 completedAt: .now,

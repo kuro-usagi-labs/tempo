@@ -705,6 +705,7 @@ final class LocalHistory {
     private let safetyRecheckJournalStorageKey = "tempo.pending-safety-recheck.v1"
     private let planRepository = LocalPlanRepository()
     private let privateSessionRepository = LocalPrivateSessionRepository()
+    private let privateSessionStore: ([LocalPrivateSession]) -> Bool
     private let safetyRecheckProtectedStore: (Data, String) -> Bool
     private let safetyRecheckProfileStore: (Data) -> Bool
 
@@ -1001,6 +1002,9 @@ final class LocalHistory {
     }
 
     init(
+        privateSessionStore: @escaping ([LocalPrivateSession]) -> Bool = { sessions in
+            LocalPrivateSessionRepository().write(sessions)
+        },
         safetyRecheckProtectedStore: @escaping (Data, String) -> Bool = { data, key in
             ProtectedFileStore.store(data, for: key)
         },
@@ -1008,6 +1012,7 @@ final class LocalHistory {
             SecureLocalStore.store(data, for: "tempo.local.profile.v1")
         }
     ) {
+        self.privateSessionStore = privateSessionStore
         self.safetyRecheckProtectedStore = safetyRecheckProtectedStore
         self.safetyRecheckProfileStore = safetyRecheckProfileStore
         hasPendingSafetyWrite = UserDefaults.standard.bool(forKey: pendingSafetyStorageKey)
@@ -1151,7 +1156,7 @@ final class LocalHistory {
             at: 0
         )
         updated = Array(updated.prefix(180))
-        guard privateSessionRepository.write(updated) else { return false }
+        guard privateSessionStore(updated) else { return false }
         privateSessions = updated
         return refreshPlan(force: true)
     }
@@ -1630,6 +1635,16 @@ final class LocalHistory {
         publishPlanChanged()
         return true
     }
+
+    #if DEBUG
+    @discardableResult
+    func seedPlanForUITesting(_ days: [LocalPlanDay]) -> Bool {
+        guard planRepository.write(days) else { return false }
+        plannedDays = days.sorted { $0.scheduleDate < $1.scheduleDate }
+        publishPlanChanged()
+        return true
+    }
+    #endif
 
     func applyPendingPlanActions() {
         let key = "tempo.pending-skip-plan-date"

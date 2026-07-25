@@ -71,6 +71,46 @@ final class TempoDomainTests: XCTestCase {
         XCTAssertEqual(tracker.completedCycles, 0)
     }
 
+    func testSessionIntensityZonesPreserveSafeThresholdSemantics() {
+        XCTAssertEqual(SessionIntensityZone.calm.value(threshold: 7), 3)
+        XCTAssertEqual(SessionIntensityZone.rising.value(threshold: 7), 6)
+        XCTAssertEqual(SessionIntensityZone.limit.value(threshold: 7), 7)
+        XCTAssertEqual(SessionIntensityZone.selected(for: 4, threshold: 7), .calm)
+        XCTAssertEqual(SessionIntensityZone.selected(for: 6, threshold: 7), .rising)
+        XCTAssertEqual(SessionIntensityZone.selected(for: 7, threshold: 7), .limit)
+    }
+
+    @MainActor
+    func testPrivateSessionStorageFailureDoesNotMutateVisibleHistory() {
+        let cleanup = LocalHistory()
+        _ = cleanup.deleteAll()
+        let history = LocalHistory(privateSessionStore: { _ in false })
+        let before = history.privateSessions
+
+        let saved = history.addPrivateSession(
+            startedAt: .now.addingTimeInterval(-60),
+            elapsedSeconds: 60,
+            pauseCount: 1,
+            outcome: "Lebih tenang",
+            note: nil,
+            saveDetails: false,
+            activeSeconds: 30,
+            totalRecoverySeconds: 30,
+            manualPauseCount: 1,
+            emergencyPauseCount: 0,
+            completedCycles: 1,
+            terminalState: "intentional-stop",
+            assistanceEnabled: true,
+            tooFast: false,
+            stoppedIntentionally: true,
+            painAfter: false,
+            irritationAfter: false
+        )
+
+        XCTAssertFalse(saved)
+        XCTAssertEqual(history.privateSessions.map(\.id), before.map(\.id))
+    }
+
     func testGuidedSessionNeedsRecoveryBeforeResume() { var s = GuidedSessionMachine(); s.start(); s.beginActive(); XCTAssertTrue(s.rising(level: 7, threshold: 7)); XCTAssertEqual(s.state, .warning); XCTAssertTrue(s.advanceWarningToRecovery()); s.recovered(level: 5, elapsedSeconds: 30); XCTAssertEqual(s.state, .pausedRecovery); s.recovered(level: 4, elapsedSeconds: 30); XCTAssertEqual(s.state, .resumeReady) }
 
     func testPlanConstraintsReplaceUnsafeOrUnavailableActivities() {
