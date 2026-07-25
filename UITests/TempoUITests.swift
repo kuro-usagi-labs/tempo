@@ -248,12 +248,14 @@ final class TempoUITests: XCTestCase {
     }
 
     private func tapConfirmation(_ identifier: String) {
-        let control = app.buttons[identifier]
+        let control = app.switches[identifier]
         scrollUntilHittable(control)
-        XCTAssertTrue(control.waitForExistence(timeout: 5), "Missing confirmation control: \(identifier)")
+        XCTAssertTrue(control.waitForExistence(timeout: 5), "Missing confirmation toggle: \(identifier)")
         XCTAssertTrue(control.isEnabled)
         XCTAssertTrue(control.isHittable)
-        control.tap()
+        if (control.value as? String) != "1" {
+            control.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        }
     }
 
     private func waitUntilEnabled(_ element: XCUIElement) {
