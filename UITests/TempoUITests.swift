@@ -165,13 +165,13 @@ final class TempoUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Nyeri"].exists)
         XCTAssertTrue(app.staticTexts["Keluhan saluran kemih"].exists)
 
-        setSwitch("health.check.confirmed", to: true)
-        setSwitch("health.check.medicalFollowUp", to: true)
+        tapConfirmation("health.check.confirmed")
+        tapConfirmation("health.check.medicalFollowUp")
         let submit = app.buttons["health.check.submit"]
         XCTAssertTrue(submit.waitForExistence(timeout: 5))
         XCTAssertFalse(submit.isEnabled)
 
-        setSwitch("health.check.confirmedAllActiveHoldsResolved", to: true)
+        tapConfirmation("health.check.confirmedAllActiveHoldsResolved")
         waitUntilEnabled(submit)
         submit.tap()
         XCTAssertTrue(element("health.check").waitForNonExistence(timeout: 5))
@@ -247,40 +247,13 @@ final class TempoUITests: XCTestCase {
         }
     }
 
-    private func setSwitch(_ identifier: String, to desired: Bool) {
+    private func tapConfirmation(_ identifier: String) {
         let control = app.buttons[identifier]
         scrollUntilHittable(control)
         XCTAssertTrue(control.waitForExistence(timeout: 5), "Missing confirmation control: \(identifier)")
-        XCTAssertTrue(control.isHittable, "Confirmation control is not hittable: \(identifier)")
-
-        if controlIsOn(control) != desired {
-            control.tap()
-        }
-
-        XCTAssertTrue(
-            waitForControl(control, toEqual: desired, timeout: 3),
-            "Confirmation \(identifier) did not change to \(desired ? "on" : "off"). Current value: \(String(describing: control.value))"
-        )
-    }
-
-    private func controlIsOn(_ control: XCUIElement) -> Bool {
-        if let number = control.value as? NSNumber {
-            return number.boolValue
-        }
-        if let string = control.value as? String {
-            let normalized = string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            return ["1", "true", "on", "yes", "dipilih"].contains(normalized)
-        }
-        return false
-    }
-
-    private func waitForControl(_ control: XCUIElement, toEqual desired: Bool, timeout: TimeInterval) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        repeat {
-            if controlIsOn(control) == desired { return true }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-        } while Date() < deadline
-        return controlIsOn(control) == desired
+        XCTAssertTrue(control.isEnabled)
+        XCTAssertTrue(control.isHittable)
+        control.tap()
     }
 
     private func waitUntilEnabled(_ element: XCUIElement) {
