@@ -68,7 +68,7 @@ struct TempoApp: App {
                 id: UUID(),
                 date: calendar.startOfDay(for: now),
                 kind: .education,
-                status: .scheduled,
+                status: .planned,
                 phase: .awareness,
                 generatedAt: now,
                 rulesetVersion: RulesetVersion.current.rawValue,
