@@ -268,8 +268,11 @@ final class TempoUITests: XCTestCase {
         if let number = toggle.value as? NSNumber {
             return number.boolValue
         }
-        let value = String(describing: toggle.value).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return ["1", "true", "on", "yes"].contains(value)
+        if let string = toggle.value as? String {
+            let normalized = string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return ["1", "true", "on", "yes"].contains(normalized)
+        }
+        return false
     }
 
     private func waitForSwitch(_ toggle: XCUIElement, toEqual desired: Bool, timeout: TimeInterval) -> Bool {
