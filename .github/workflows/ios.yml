@@ -7,7 +7,115 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ios-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  compile-review:
+    if: github.event_name == 'pull_request'
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install project generator
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate
+      - name: Compile app and app-unit tests without booting a simulator
+        run: |
+          mkdir -p build/logs
+          set -o pipefail
+          xcodebuild build-for-testing \
+            -project Tempo.xcodeproj \
+            -scheme Tempo \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$PWD/build/CompileDerivedData" \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee build/logs/compile-review.log
+      - name: Upload compile diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tempo-ux-compile-diagnostics
+          path: build/logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+  review-ipa:
+    if: github.event_name == 'pull_request' && github.head_ref == 'codex/tempo-v2.2.0-ux-foundation-review'
+    runs-on: macos-15
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install project generator
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate
+      - name: Run deterministic domain tests
+        run: swift test
+      - name: Enforce local-only networking policy
+        run: |
+          ! rg --glob '*.swift' 'URLSession|NWConnection|Alamofire|Firebase|Analytics|CloudKit|OpenAI|Anthropic' App Sources
+      - name: Build ARM64 review archive
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project Tempo.xcodeproj \
+            -scheme Tempo \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -sdk iphoneos \
+            -archivePath "$PWD/build/Tempo-UX22-Review.xcarchive" \
+            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+      - name: Create review IPA
+        run: |
+          set -euo pipefail
+          app_path="build/Tempo-UX22-Review.xcarchive/Products/Applications/Tempo.app"
+          output="build/review-output"
+          test -d "$app_path"
+          test -f "$app_path/Info.plist"
+          test -f "$app_path/Tempo"
+          /usr/bin/codesign --force --deep --sign - --timestamp=none "$app_path"
+          /usr/bin/codesign --verify --deep --strict --verbose=2 "$app_path"
+          /usr/bin/file "$app_path/Tempo" | /usr/bin/grep -q arm64
+          mkdir -p "$output/Payload"
+          cp -R "$app_path" "$output/Payload/"
+          (cd "$output" && /usr/bin/zip -qry Tempo-UX22-review-resign-ready.ipa Payload)
+          /usr/bin/unzip -t "$output/Tempo-UX22-review-resign-ready.ipa"
+          (cd "$output" && shasum -a 256 Tempo-UX22-review-resign-ready.ipa > Tempo-UX22-review-resign-ready.ipa.sha256)
+          bundle_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app_path/Info.plist")
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_path/Info.plist")
+          build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app_path/Info.plist")
+          minimum_ios=$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$app_path/Info.plist")
+          cat > "$output/BUILD_INFO.txt" <<EOF
+          TEMPO UX 2.2 review build
+          Branch: $GITHUB_HEAD_REF
+          Commit: $GITHUB_SHA
+          Workflow run: $GITHUB_RUN_NUMBER
+          Bundle ID: $bundle_id
+          Version: $version
+          Build: $build
+          Minimum iOS: $minimum_ios
+
+          This IPA is re-sign-ready and must be re-signed before installation.
+          EOF
+      - name: Upload review IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tempo-UX22-review-ipa-${{ github.run_number }}
+          path: |
+            build/review-output/Tempo-UX22-review-resign-ready.ipa
+            build/review-output/Tempo-UX22-review-resign-ready.ipa.sha256
+            build/review-output/BUILD_INFO.txt
+          if-no-files-found: error
+          retention-days: 14
+
   test-and-package:
     runs-on: macos-15
     permissions:
@@ -25,7 +133,9 @@ jobs:
           ! rg --glob '*.swift' 'URLSession|NWConnection|Alamofire|Firebase|Analytics|CloudKit|OpenAI|Anthropic' App Sources
       - name: Select an available iPhone simulator
         id: simulator
+        timeout-minutes: 6
         run: |
+          xcrun simctl shutdown all || true
           simulator_id="$(xcrun simctl list devices available | awk -F '[()]' '/iPhone/{print $2; exit}')"
           test -n "$simulator_id"
           echo "id=$simulator_id" >> "$GITHUB_OUTPUT"
@@ -33,10 +143,30 @@ jobs:
           xcrun simctl bootstatus "$simulator_id" -b
       - name: Run focused hotfix UI tests
         run: |
-          xcodebuild test -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath "$PWD/build/DerivedData" CODE_SIGNING_ALLOWED=NO -only-testing:TempoUITests/TempoUITests/testManualPostponeOpensTheLinkedReplacement -only-testing:TempoUITests/TempoUITests/testMultipleSafetyHoldsNeedConfirmationBeforeClearRecheck
+          mkdir -p build/logs
+          set -o pipefail
+          xcodebuild test -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath "$PWD/build/DerivedData" CODE_SIGNING_ALLOWED=NO -only-testing:TempoUITests/TempoUITests/testManualPostponeOpensTheLinkedReplacement -only-testing:TempoUITests/TempoUITests/testMultipleSafetyHoldsNeedConfirmationBeforeClearRecheck 2>&1 | tee build/logs/focused-ui.log
+      - name: Upload review-branch diagnostic log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tempo-ux-review-diagnostics
+          path: build/logs
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Run iOS unit and UI tests
         run: |
-          xcodebuild test -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath "$PWD/build/DerivedData" CODE_SIGNING_ALLOWED=NO
+          mkdir -p build/logs
+          set -o pipefail
+          xcodebuild test -project Tempo.xcodeproj -scheme Tempo -sdk iphonesimulator -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath "$PWD/build/DerivedData" CODE_SIGNING_ALLOWED=NO 2>&1 | tee build/logs/full-suite.log
+      - name: Upload full-suite diagnostic log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tempo-ux-full-suite-diagnostics
+          path: build/logs/full-suite.log
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Build iOS application
         run: |
           xcodebuild build -project Tempo.xcodeproj -scheme Tempo -configuration Release -sdk iphonesimulator -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath "$PWD/build/DerivedData" CODE_SIGNING_ALLOWED=NO
@@ -88,15 +218,14 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: Tempo-resign-ready-ipa
-          path: build
+          path: release-assets
       - name: Verify release checksum
-        run: shasum -a 256 -c Tempo-resign-ready.ipa.sha256
-        working-directory: build
+        run: (cd release-assets && sha256sum --check Tempo-resign-ready.ipa.sha256)
       - name: Publish sideload release
         uses: softprops/action-gh-release@v2
         with:
           name: TEMPO ${{ github.ref_name }}
           body_path: RELEASE_NOTES.md
           files: |
-            build/Tempo-resign-ready.ipa
-            build/Tempo-resign-ready.ipa.sha256
+            release-assets/Tempo-resign-ready.ipa
+            release-assets/Tempo-resign-ready.ipa.sha256

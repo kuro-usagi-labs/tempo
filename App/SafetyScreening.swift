@@ -7,6 +7,12 @@ struct SafetyScreeningAnswers: Equatable {
     var acuteInjury = false
     var mildIrritation = false
 
+    /// Explicit default initializer keeps existing call sites source-compatible
+    /// while allowing the review-only onboarding draft to provide a dedicated
+    /// memberwise initializer in its extension without colliding with a
+    /// synthesized initializer.
+    init() {}
+
     var hasAny: Bool {
         severeOrPelvicPain || bloodOrFever || urinaryOrDischarge || acuteInjury || mildIrritation
     }
@@ -24,7 +30,6 @@ struct SafetyScreeningAnswers: Equatable {
         if mildIrritation { return "safety.irritation" }
         return "safety.clear"
     }
-
 }
 
 struct SafetyScreeningFields: View {
