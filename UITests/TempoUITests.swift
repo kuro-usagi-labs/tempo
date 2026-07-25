@@ -252,15 +252,23 @@ final class TempoUITests: XCTestCase {
         scrollUntilHittable(control)
         XCTAssertTrue(control.waitForExistence(timeout: 5), "Missing confirmation toggle: \(identifier)")
         XCTAssertTrue(control.isEnabled)
+
+        if control.frame.midY > app.frame.midY {
+            app.swipeUp()
+            XCTAssertTrue(control.waitForExistence(timeout: 3))
+        }
         XCTAssertTrue(control.isHittable)
 
         if !switchIsOn(control) {
-            control.tap()
+            control.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        }
+        if !waitForSwitch(control, toEqual: true, timeout: 2) {
+            control.swipeRight()
         }
 
         XCTAssertTrue(
             waitForSwitch(control, toEqual: true, timeout: 3),
-            "Confirmation toggle did not turn on: \(identifier). Current value: \(String(describing: control.value))"
+            "Confirmation toggle did not turn on: \(identifier). Current value: \(String(describing: control.value)); frame: \(control.frame); appFrame: \(app.frame)"
         )
     }
 
