@@ -66,7 +66,7 @@ struct TempoV2AppShell: View {
                             TempoProgressScreen().tag(TempoTab.progress)
                                 .tabItem { Label("Progres", systemImage: "chart.line.uptrend.xyaxis") }
                             TempoProfileScreen().tag(TempoTab.profile)
-                                .tabItem { Label("Profil", systemImage: "person.crop.circle") }
+                                .tabItem { Label("Pengaturan", systemImage: "gearshape.fill") }
                         }
                         .tint(TempoDesign.Palette.accent)
                         .navigationDestination(for: TempoRoute.self) { TempoRouteDestination(route: $0) }
